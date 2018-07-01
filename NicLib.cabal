@@ -1,0 +1,70 @@
+author: Nicholas Chandoke
+build-type: Simple
+cabal-version: 1.9.2
+bug-reports: https://github.com/nick-chandoke/niclib/issues/new
+copyright: Copyright (c) 2016-2018 Nicholas Chandoke
+description: URL, Filesystem, networking, and aeson helper methods. Miscellaneous functions, and implementation of Trie, a buffer that holds n most recent inserts/pushes, and a set that's memory efficient for storing redundant data.
+extra-source-files: README.md
+homepage: http://github.com/nick-chandoke/niclib
+license-file: LICENSE
+license: BSD3
+maintainer: Nicholas Chandoke <nicholas.chandoke@gmail.com>
+name: NicLib
+stability: Stable
+synopsis: Hodgepodge of functionality. The personal library of Nic Chandoke. Hopefully useful to others, too.
+tested-with: GHC ==8.4.2
+version: 0.1.0
+
+library
+  ghc-options: -O2 -dynamic
+  hs-source-dirs: src
+  exposed-modules: NicLib.NStdLib
+      NicLib.Aeson
+      NicLib.FileSystem
+      NicLib.IO
+      NicLib.Net
+      NicLib.Parser
+      NicLib.Statistics
+      NicLib.Structures.Buffer
+      NicLib.Structures.IndexedSet
+      NicLib.Structures.Trie
+      NicLib.URL
+  build-depends:
+      base > 4 && < 5,
+      ListLike,
+      aeson,
+      aeson-pretty,
+      binary,
+      boolean-like,
+      bytestring,
+      containers,
+      directory,
+      exceptions,
+      filepath,
+      ghc-prim,
+      http-types,
+      http-conduit,
+      http-client,
+      streaming-commons,
+      random-fu,
+      random-source,
+      taggy,
+      transformers,
+      text,
+      time,
+      unordered-containers,
+      vector
+--default-extensions:
+--other-extensions:
+
+  if !impl(ghc >= 8.4)
+    build-depends: semigroups >= 0.16 && < 0.19
+
+--test-suite niclib-test
+--  type: exitcode-stdio-1.0
+--  main-is: test.hs
+--  build-depends: base >= 4 && < 5
+
+source-repository head
+  type:     git
+  location: git://github.com/nick-chandoke/niclib.git
