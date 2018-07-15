@@ -54,7 +54,6 @@ module NicLib.Structures.Trie
 , fromSet
 -}
 ) where
-import Control.Applicative (liftA3)
 import Control.Arrow
 import Data.Binary
 import Data.Bool (bool)
@@ -67,7 +66,8 @@ import Data.List (uncons)
 import qualified Data.ListLike as LL
 import qualified Data.Set as S
 import Data.Function ((&))
-import NicLib.NStdLib (TagPair(..), cT, setFind)
+import NicLib.NStdLib (TagPair(..), cT)
+import NicLib.Set (setFind)
 
 -- | Store a set of Tries. This is a root dummy node essentially; it allows many sequences with different initial elements to be in the same data type
 -- a Trie may be S.empty

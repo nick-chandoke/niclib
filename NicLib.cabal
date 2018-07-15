@@ -13,21 +13,29 @@ name: NicLib
 stability: Stable
 synopsis: Hodgepodge of functionality. The personal library of Nic Chandoke. Hopefully useful to others, too.
 tested-with: GHC ==8.4.2
-version: 0.1.0
+version: 0.1.1
 
 library
-  ghc-options: -O2 -dynamic
+  ghc-options: -O2
   hs-source-dirs: src
   exposed-modules: NicLib.NStdLib
       NicLib.Aeson
       NicLib.FileSystem
+      NicLib.HTML
       NicLib.IO
+      NicLib.List
       NicLib.Net
       NicLib.Parser
+      -- still under primary development, but useful for some additonal functions, e.g. mkdir
+      NicLib.Scraper
+      NicLib.Set
       NicLib.Statistics
       NicLib.Structures.Buffer
       NicLib.Structures.IndexedSet
       NicLib.Structures.Trie
+      NicLib.Text
+      NicLib.Time
+      NicLib.Tree
       NicLib.URL
   build-depends:
       base > 4 && < 5,
@@ -52,7 +60,9 @@ library
       transformers,
       text,
       time,
+      unix,
       unordered-containers,
+      uri-encode,
       vector
 --default-extensions:
 --other-extensions:

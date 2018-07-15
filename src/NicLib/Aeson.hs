@@ -11,10 +11,8 @@ module NicLib.Aeson
 ) where
 
 import Data.Aeson hiding (eitherDecode)
-import Data.Aeson.Encode.Pretty -- package aeson-pretty
+import Data.Aeson.Encode.Pretty -- package aeson-pretty. Used only for re-export
 import Data.Aeson.TH
-import NicLib.IO
-import NicLib.NStdLib
 import qualified Data.Aeson (eitherDecode)
 import qualified Data.Bifunctor as BiF
 import qualified Data.ByteString.Lazy.Char8 as BS

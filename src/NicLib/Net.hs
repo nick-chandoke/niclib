@@ -47,6 +47,7 @@ import qualified Data.Binary as Bin
 import qualified Data.ByteString.Char8 as BS'
 import qualified Data.ByteString.Lazy.Char8 as BS
 import qualified Data.Text as T'
+import NicLib.Text
 import Data.String (IsString)
 
 {- other useful funcs

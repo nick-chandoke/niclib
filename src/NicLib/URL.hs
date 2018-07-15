@@ -41,6 +41,7 @@ import Data.Function
 import GHC.Generics (Generic)
 import NicLib.Aeson
 import NicLib.NStdLib
+import NicLib.FileSystem
 import NicLib.Parser (parse)
 import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS'
@@ -184,6 +185,7 @@ str2url t mref = first (b '?') (b '#' t) & \((t', q), f) -> -- pull-off fragment
         takeFirst :: [T'.Text] -> T'.Text -> Maybe (T'.Text, T'.Text)
         takeFirst delims text = find (not . T'.null . snd) ((\delim -> T'.breakOn delim text & \(p1,p2) -> (p1, T'.drop (T'.length delim) p2)) <$> delims)
 
+        -- old parser (uses break rather than NicLib.Parser.parse)
         {- | parse what information we can from a URL; we don't fill-in missing information with defaults here; that's done in the context inside str2url but outside parse. In particular, the referer should be absolute, and so should have every field available to populate any missing ones in what's returned from parse
         -- notably, scheme and path may be empty
         -- all the "_ -> Nothing"'s herein are for pattern-matching completeness. They are unreachable, though.
