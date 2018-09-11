@@ -30,6 +30,7 @@ import Data.Binary
 -- Fortunately, because there's a bijection between indicies and values, you can compare equality of two values simply by comparing their numbers. However, remember that the indicies are unordered! The Ordering of two indicies tells which one was inserted into the map first - nothing else!
 data IndexedSet a = IndexedSet { nextIndex :: Int, nums :: IntMap a, vals :: Map a Int } deriving Eq
 
+-- TODO: replace with store instance
 instance Binary a => Binary (IndexedSet a) where
     put (IndexedSet {..}) = do
         put nextIndex

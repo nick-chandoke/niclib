@@ -5,20 +5,20 @@ module NicLib.Text
 , removeComments
 , quote
 , indent
+, truncToNDigits
 --, columnize
 --, columnizeM
 --, zipComplete
 ) where
-import NicLib.NStdLib
-import qualified Data.Text as T'
-import qualified Data.ListLike as LL
-import Data.ListLike.String (StringLike)
-import qualified Data.ListLike.String as LLS
-import qualified Data.Text.Lazy as T
-import qualified Data.ByteString.Lazy.Char8 as BS
-import qualified Data.ByteString.Char8 as BS'
-import Data.String (IsString)
+
+-- import qualified Data.ByteString.Char8 as BS'
+-- import qualified Data.ByteString.Lazy.Char8 as BS
+-- import qualified Data.Text.Lazy as T
 import Data.Word
+import NicLib.NStdLib
+import qualified Data.ListLike as LL
+import qualified Data.ListLike.String as LLS
+import qualified Data.Text as T'
 
 --import System.Console.Terminfo.Cursor
 --import System.Console.Terminfo.Base
@@ -35,7 +35,7 @@ instance Stringy String
 quote :: (LL.ListLike str Char) => str -> str
 quote = LL.cons '\"' . flip LL.snoc '\"'
 
--- hack to make indent work with ByteString
+-- hack to make indent work with ByteString (again, shouldn't be necessary after moving ListLike to TypeFamilies rather than FuncDeps)
 class StrEmpty a where strEmpty :: a
 instance StrEmpty Char where strEmpty = ' '
 instance StrEmpty Word8 where strEmpty = 32
@@ -75,6 +75,10 @@ removeComments t = case T'.uncons t of
         if | n > 0 && pc == '-' && c == '}' -> (acc, c, n - 1) -- parsing comment closes is only relevant if positive n. btw, consider these booleans carefully before thinking that you may re-express it better
            | pc == '{' && c == '-' -> (T'.init acc, c, n + 1)
            | otherwise -> (if n > 0 then acc else T'.snoc acc c, c, n)
+
+-- | truncate a RealFloat's decimal to a given number of digits
+truncToNDigits :: (Show a) => Int -> a -> String
+truncToNDigits n = (\(a,b) -> a <> take (n + 1) b) . break (=='.') . show
 
 {-
 -- | columnize by pulling the COLUMNS environment variable, then calling columnize

@@ -9,6 +9,8 @@
 , ScopedTypeVariables
 , ViewPatterns
 #-}
+-- TODO: move foldr & foldl' to Foldable instance, write Functor, Applicative, and Traversable instances. Maybe even write a ListLike instance?
+-- TODO: tries are a {-# SPECIALIZATION #-} of trees. One should never have a tree of something when a trie is permittable. Make this selection automatic.
 -- | Trie: an effecient set of sequences whose elements permit an order, e.g. strings ([Char] where ∃ compare :: Char -> Char -> Ordering) or delimited strings (e.g. '/'-delimited URL paths: string/string/string/... -> Trie string where each level represents a '/', e.g. level 1's "baz" and level 2's "foo" represents "baz/foo")
 -- likely you'll want to import this module qualified
 -- I don't implement common classes because Trie a should really be (Traversable t, Ord a) => Trie (t a), since Trie is defined only for traversables of ordered elements, but that'd require ExistentialTypes, which would be ugly, or dependent types (which obviously Haskell doesn't support)
@@ -16,7 +18,7 @@
 -- ...come to think of it, a trie is just a space-efficient version of an unordered set of ordered sets. So I should be able to use this for storing application processes.
 module NicLib.Structures.Trie
 ( Trie
-, TagPair(..)
+, OrderBy(..)
 , delete
 , empty
 , findMax
@@ -66,7 +68,7 @@ import Data.List (uncons)
 import qualified Data.ListLike as LL
 import qualified Data.Set as S
 import Data.Function ((&))
-import NicLib.NStdLib (TagPair(..), cT)
+import NicLib.NStdLib (OrderBy(..), cT)
 import NicLib.Set (setFind)
 
 -- | Store a set of Tries. This is a root dummy node essentially; it allows many sequences with different initial elements to be in the same data type
@@ -201,8 +203,8 @@ mmCommon f = go LL.empty where
         Trie' v k -> go (LL.cons v h) k
 
 -- | you'll probably need to specify the type of ListLike, e.g. (toSet trie :: S.Set String)
-toSet :: (ListLike full a, Ord a, Ord full) => Trie a tag -> S.Set (TagPair full tag)
-toSet = foldr (S.insert . TagPair) S.empty
+toSet :: (ListLike full a, Ord a, Ord full) => Trie a tag -> S.Set (OrderBy full tag)
+toSet = foldr (S.insert . OrderBy) S.empty
 
 toList :: (ListLike full a, Ord a, Ord full, Ord tag) => Trie a tag -> [(full, tag)]
 toList = foldr (:) []

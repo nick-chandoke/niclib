@@ -1,6 +1,6 @@
 author: Nicholas Chandoke
 build-type: Simple
-cabal-version: 1.9.2
+cabal-version: >=1.9.2
 bug-reports: https://github.com/nick-chandoke/niclib/issues/new
 copyright: Copyright (c) 2016-2018 Nicholas Chandoke
 description: URL, Filesystem, networking, and aeson helper methods. Miscellaneous functions, and implementation of Trie, a buffer that holds n most recent inserts/pushes, and a set that's memory efficient for storing redundant data.
@@ -13,21 +13,17 @@ name: NicLib
 stability: Stable
 synopsis: Hodgepodge of functionality. The personal library of Nic Chandoke. Hopefully useful to others, too.
 tested-with: GHC ==8.4.2
-version: 0.1.1
+version: 0.1.2
 
 library
   ghc-options: -O2
   hs-source-dirs: src
-  exposed-modules: NicLib.NStdLib
+  exposed-modules:
       NicLib.Aeson
+      NicLib.Errors
       NicLib.FileSystem
-      NicLib.HTML
-      NicLib.IO
       NicLib.List
-      NicLib.Net
-      NicLib.Parser
-      -- still under primary development, but useful for some additonal functions, e.g. mkdir
-      NicLib.Scraper
+      NicLib.NStdLib
       NicLib.Set
       NicLib.Statistics
       NicLib.Structures.Buffer
@@ -36,33 +32,32 @@ library
       NicLib.Text
       NicLib.Time
       NicLib.Tree
-      NicLib.URL
   build-depends:
       base > 4 && < 5,
       ListLike,
       aeson,
       aeson-pretty,
       binary,
-      boolean-like,
+--    boolean-like,
       bytestring,
       containers,
       directory,
       exceptions,
       filepath,
       ghc-prim,
-      http-types,
-      http-conduit,
-      http-client,
-      streaming-commons,
+--    http-types,
+--    http-conduit,
+--    http-client,
+--    streaming-commons,
       random-fu,
       random-source,
-      taggy,
-      transformers,
+      transformers>=0.5.5.0,
       text,
       time,
       unix,
+--    uri-bytestring,
       unordered-containers,
-      uri-encode,
+--    uri-encode,
       vector
 --default-extensions:
 --other-extensions:
