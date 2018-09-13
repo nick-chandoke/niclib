@@ -49,6 +49,8 @@ module NicLib.NStdLib
 , bool'
 , Isomorphism(..)
 , cT
+, foldBins
+, foldBins'
 , (<%)
 , (%>)
 , replicateM'
@@ -286,6 +288,15 @@ infixl 2 <%
 infixr 2 %>
 (%>) :: (a -> b -> c) -> (c -> d) -> (a -> b -> d)
 (%>) = flip cT
+
+-- | Fold a bunch of binary functions. As an example, here's an Ord instance for @Network.Wai.Request@:
+-- @(==) = foldBins (&&) (==) True [requestMethod, rawPathInfo, rawQueryString] :: Request -> Request -> Bool@
+foldBins :: Foldable t => (c -> b1 -> c) -> (b2 -> b2 -> b1) -> c -> t (a -> b2) -> a -> a -> c
+foldBins f1 f2 x = curry . foldr (\f t -> liftA2 f1 t . uncurry . on f2 $ f) (pure x)
+
+-- | Strict left fold version of @foldBins@. Note that, despite being a left fold, it has a function signature identical to foldBins.
+foldBins' :: Foldable t => (c -> b1 -> c) -> (b2 -> b2 -> b1) -> c -> t (a -> b2) -> a -> a -> c
+foldBins' f1 f2 x = curry . foldl' (\t -> liftA2 f1 t . uncurry . on f2) (pure x)
 
 -- | Numeric has showHex and showOct, but not showBin? What.
 showBin :: (Show a, Integral a) => a -> ShowS
