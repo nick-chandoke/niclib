@@ -1,4 +1,3 @@
-{-# LANGUAGE NamedFieldPuns, ViewPatterns, RecordWildCards, TypeFamilies #-}
 -- | structures that reduce memory use by not storing redundant data
 module NicLib.Structures.IndexedSet
 ( IndexedSet
@@ -16,7 +15,7 @@ module NicLib.Structures.IndexedSet
 , member
 , notMember
 ) where
-import Data.Function ((&))
+
 import Data.IntMap.Strict (IntMap)
 import Data.Map.Strict (Map)
 import Prelude hiding (lookup, null)
@@ -58,7 +57,7 @@ delete i s@(IndexedSet {nums, vals}) = maybe
 -- | get an element from the set
 pop :: Ord a => IndexedSet a -> Maybe a
 pop (null -> False) = Nothing
-pop (IndexedSet {nums, vals}) = Just . fst $ M.elemAt 0 vals
+pop (IndexedSet {vals}) = Just . fst $ M.elemAt 0 vals
 
 empty :: IndexedSet a
 empty = IndexedSet 0 IM.empty M.empty

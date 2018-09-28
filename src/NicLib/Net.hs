@@ -1,167 +1,128 @@
-{-# OPTIONS_GHC -threaded #-}
-{-# LANGUAGE
-  FlexibleInstances
-, FlexibleContexts
-, LambdaCase
-, MultiWayIf
-, NamedFieldPuns
-, NumDecimals
-, OverloadedStrings
-, RankNTypes
-, ViewPatterns
-#-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+module NicLib.Net where
 
--- | Miscellanary of Network-based IO functions, namely creating & handling HTTP requests & responses in ExceptT, with cookie jar support
-module NicLib.Net
-( commonRequest
-, fetch'
-, fetch
-, handleResponse
-, httpOrBust
-, CookieJar
-, createCookieJar
-, evictExpiredCookies
-) where
-
-import Control.Concurrent (threadDelay)
-import Control.Monad.Catch
+-- base
 import Control.Monad.IO.Class
-import Control.Monad.Trans.Except
-import Control.Monad.Trans.State
-import Control.Monad.Trans.Class
-import Data.ListLike (ListLike)
-import Data.ListLike.String (StringLike, fromString, toString, unlines)
-import Data.Streaming.Zlib (ZlibException(..))
-import Data.Time.Calendar
-import Data.Time.Clock
-import Network.HTTP.Client hiding (httpLbs, httpNoBody, withResponse) -- for cookie stuff
-import Network.HTTP.Conduit (HttpException(..), HttpExceptionContent(..))
-import Network.HTTP.Simple -- in package http-conduit. Contrast with Network.HTTP.Conduit (in http-conduit too) and Network.HTTP.Client (in the http-client package)
-import Network.HTTP.Types.Status (Status(statusMessage))
-import NicLib.IO
-import NicLib.NStdLib
-import NicLib.URL as URL
-import System.IO
-import Prelude hiding (unlines)
-import qualified Data.Binary as Bin
-import qualified Data.ByteString.Char8 as BS'
-import qualified Data.ByteString.Lazy.Char8 as BS
-import qualified Data.Text as T'
-import NicLib.Text
-import Data.String (IsString)
+import Data.Maybe (fromJust)
+import Data.String (IsString(..))
+-- import qualified Data.Trie as Trie
+-- import Data.Trie (Trie)
+import Data.Either (either)
+import Data.Foldable (foldl')
+import Data.Char (toLower)
 
-{- other useful funcs
-   setRequestBodyURLEncoded :: [(ByteString, ByteString)] -> Request -> Request -- sets content-type to application/x-www-form-urlencoded and sets request body as URL-encoded data -- cf. <https://hackage.haskell.org/package/http-client-0.5.7.0/docs/Network-HTTP-Client-MultipartFormData.html>?
-   setRequestbodyFile :: FilePath -> Request -> Request
-   setRequestBodyJSON :: ToJSON a => a -> Request -> Request -- sets content-type to application/json too
-   setRequestBodyLBS :: ByteString -> Request -> Request
-   setRequestHeaders :: [(HeaderName :: CI ByteString, ByteString)] -- see <http://hackage.haskell.org/package/http-types-0.9.1/docs/Network-HTTP-Types-Header.html#t:HeaderName>. also addRequestHeader
-   httpJSONEither
--}
+-- text
+import Data.Text.Encoding (decodeUtf8)
+import Data.Text (Text)
 
--- UTCTime Binary instance used in Cookie's Binary instance, for Cookie's expiry time, creation time,...record fields
-instance Bin.Binary UTCTime where
-    put (UTCTime {utctDay, utctDayTime}) = do
-        Bin.put (toModifiedJulianDay utctDay)
-        Bin.put (truncate utctDayTime :: Integer)
-    get = do
-        modJulDay <- Bin.get :: Bin.Get Integer
-        dayTimeInt <- Bin.get :: Bin.Get Integer
-        return $ UTCTime (ModifiedJulianDay modJulDay) (fromInteger dayTimeInt)
+import Control.Monad.Trans.Except -- transformers
+import Network.HTTP.Req hiding (parseUrl) -- req
+import URI.ByteString -- uri-bytestring
 
-instance Bin.Binary Cookie where
-    put (Cookie {cookie_name, cookie_value, cookie_expiry_time, cookie_domain, cookie_path, cookie_creation_time, cookie_last_access_time, cookie_persistent, cookie_host_only, cookie_secure_only, cookie_http_only}) = do
-        Bin.put cookie_name
-        Bin.put cookie_value
-        Bin.put cookie_expiry_time
-        Bin.put cookie_domain
-        Bin.put cookie_path
-        Bin.put cookie_creation_time
-        Bin.put cookie_last_access_time
-        Bin.put cookie_persistent
-        Bin.put cookie_host_only
-        Bin.put cookie_secure_only
-        Bin.put cookie_http_only
-    get = Cookie <$> Bin.get <*> Bin.get <*> Bin.get <*> Bin.get <*> Bin.get <*> Bin.get <*> Bin.get <*> Bin.get <*> Bin.get <*> Bin.get <*> Bin.get
+-- NicLib
+import NicLib.Errors
+import NicLib.NStdLib (both)
 
-instance Bin.Binary CookieJar where
-    put = Bin.put . destroyCookieJar
-    get = liftM createCookieJar Bin.get
+-- bytestring
+import qualified Data.ByteString as BS'
+import qualified Data.ByteString.Char8 as BSC'
 
-commonRequest :: URL -> Request
-commonRequest u = let https = scheme u == "https:" in
-    setRequestMethod "GET"
-    . setRequestHost (iso $ URL.domain u)
-    . setRequestPath (iso $ URL.path u)
-    . setRequestSecure https
-    . setRequestPort ({- fromMaybe -} (if https then 443 else 80) {- (readMaybe . BS'.unpack . bstail' . iso $ URL.port u) -})
-    . setRequestQueryString (getQuery $ query u)
-    $ defaultRequest
-
--- | fetch an HTTP resource based on given HTTP request
-fetch' :: (MonadIO m, MonadCatch m, ListLike str Char, IsString str, StringLike str, Semigroup str) => Request -> StateT CookieJar (ExceptT str m) BS.ByteString
-fetch' req = do
-    jar <- get
-    now <- liftIO getCurrentTime
-    let (req', updJar) = insertCookiesIntoRequest req jar now -- cf. updateCookieJar
-    resp <- lift . httpOrBust 3 5e6 $ httpLBS req'
-    let (updJar', resp') = updateCookieJar resp req' now updJar
-    put updJar'
-    return $ getResponseBody resp'
-
--- | fetch a resource using a sensible HTTP request based on given URL
-fetch :: (MonadIO m, MonadCatch m, ListLike str Char, IsString str, StringLike str, Semigroup str) => URL -> StateT CookieJar (ExceptT str m) BS.ByteString
-fetch = fetch' . commonRequest
-
--- | returns a function in which you can handle the response code and body
--- example: handleResponse (httpOrBust 3 2e6 (httpLBS someRequest)) $ \(code, body) -> ...
-handleResponse :: forall m b str. (MonadCatch m, MonadIO m) => ExceptT str m (Response BS.ByteString) -> ((Int, BS.ByteString) -> ExceptT str m b) -> ExceptT str m b
-handleResponse t f = fmap (getResponseStatusCode &&& getResponseBody) t >>= f
-
--- | exception handler. Wraps an EIO, returning Lefts for various HTTP errors
--- i is current iteration state. If the EIO produces an error that suggests that retrying would help, then it's retried. n is max number of attempts at the given EIO before giving-up. For example, httpOrBust retries a connection attempt that timed-out, but not one that had too many redirects.
--- if all attempts fail, the error message of the most recent attempt is returned in the ExceptT's Left value
--- wait time is in microseconds (1s = 1e6 μs)
-httpOrBust :: forall m a str. (MonadCatch m, MonadIO m, ListLike str Char, IsString str, StringLike str, Semigroup str) => Int -> Int -> ExceptT str m a -> ExceptT str m a
-httpOrBust n waitTime e = go 1 e where
-    go i e' = case compare i n of -- YES, we DO NEED go to take e'! e' IS NOT NECESSARILY EQUAL TO e! Namely, go2 passes an endomorphism of e to go potentially many times.
-                                  -- related note: go and go2 are mutually recursive. Ideally I'd have written go2 as a lambda variable in a CPS call inside a normally recursive go.
-        LT -> liftIO (threadDelay waitTime) >> go2 i -- delay a bit, in hopes that a temporary network failure will fix itself, then retry
-        EQ -> go2 i -- try one last time (no thread sleeping, since we aren't going to try again, and so won't wait for the network to go back up)
-        GT -> e' -- stop retrying; return ExceptT immediately. base case #1 for go & go2
-    go2 i = catch e $ exceptionToErrorMsg i >>> \(retry, message) ->
-        let !ex = ExceptT . return . Left $ message in do
-            liftIO (hPutStrLn stderr $ toString message) -- IO () -> m (). TODO: So here we want to update the user on progress in real-time (during the connection attempt process) rather than afterward; thus either WriterT or ExceptT is inappropriate, since we want to output messages in this function, right here, rather than accumulating a value to be returned....
-            if retry then go (succ i) ex else ex -- base case #2 for go & go2
+instance (MonadIO m, IsString e, Monoid w) => MonadHttp (BugT e w m) where
+    handleHttpException = err . fromString . show
+{-
+    getHttpConfig = def {httpConfigRetryPolicy = _, httpConfigRetryJudge = _}
+        where
+    exceptionToErrorMsg :: Network.HTTP.Client.HttpException -> (Bool, Text)
     exceptionToErrorMsg i = \case
-        HttpExceptionRequest req content -> (second (\message -> unlines ["HTTP Exception: (" <> pnn i <> " attempt)", indent 4 message, "for the following request:", indent 4 . fromString $ show req]))
+        HttpExceptionRequest req content -> second (\message -> T'.unlines ["HTTP Exception: (" <> pnn i <> " attempt)", indent 4 message, "for the following request:", indent 4 . T'.pack $ show req])
             (case content of
                 ConnectionClosed                       -> (False, "Attempted to use an already closed Network.HTTP.Client.Internal Connection")
-                ConnectionFailure cfe                  -> (True, "Connection failure: " <> fromString (show cfe)) -- TODO: not sure if this should be False
+                ConnectionFailure cfe                  -> (True, "Connection failure: " <> T'.pack (show cfe)) -- TODO: not sure if this should be False
                 ConnectionTimeout                      -> (True, "Timed-out trying to connect to server")
-                HttpZlibException (ZlibException code) -> (False, "Problem inflating response body (code " <> (fromString $ show code) <> "). Consult zlib(3) or other docs.")
+                HttpZlibException (ZlibException code) -> (False, "Problem inflating response body (code " <> T'.pack (show code) <> "). Consult zlib(3) or other docs.")
                 IncompleteHeaders                      -> (False, "Incomplete set of headers") -- how does it know it's incomplete?
-                InternalException ie                   -> (False, "Internal exception: " <> fromString (show ie))
+                InternalException ie                   -> (False, "Internal exception: " <> T'.pack (show ie))
                 InvalidChunkHeaders                    -> (False, "Invalid chunk header!")
-                InvalidDestinationHost h               -> (False, "Tried connecting to an invalid host (" <> fromString (BS'.unpack h) <> ")")
-                InvalidHeader s                        -> (False, "Could not parse header: " <> fromString (BS'.unpack s))
-                InvalidProxySettings msg               -> (False, fromString $ T'.unpack msg)
-                InvalidProxyEnvironmentVariable a b    -> (False, "Invalid proxy envvar: " <> fromString (T'.unpack a) <> "=" <> fromString (T'.unpack b))
-                InvalidStatusLine s                    -> (False, "Unknown response status: " <> fromString (BS'.unpack s)) -- a status line is the HTTP response status code plus the "reason phrase", e.g. "OK" or "Not Found"
+                InvalidDestinationHost h               -> (False, "Tried connecting to an invalid host (" <> decodeUtf8 h <> ")")
+                InvalidHeader s                        -> (False, "Could not parse header: " <> decodeUtf8 s)
+                InvalidProxySettings msg               -> (False, msg)
+                InvalidProxyEnvironmentVariable a b    -> (False, "Invalid proxy envvar: " <> a <> "=" <> b)
+                InvalidStatusLine s                    -> (False, "Unknown response status: " <> decodeUtf8 s) -- a status line is the HTTP response status code plus the "reason phrase", e.g. "OK" or "Not Found"
                 NoResponseDataReceived                 -> (True, "No response data from server at all. Was a connection closed prematurely?")
                 OverlongHeaders                        -> (False, "Header too long in server response")
-                ProxyConnectException bs code status   -> (False, "HTTP response " <> fromString (show code) <> " (" <> fromString (BS'.unpack (statusMessage status)) <> ") when trying to connect to proxy\n" <> fromString (BS'.unpack bs))
-                ResponseBodyTooShort a b               -> (False, "Request body unexpected size (too short); expected " <> fromString (show a) <> " but received" <> fromString (show b))
+                ProxyConnectException bs code status   -> (False, "HTTP response " <> T'.pack (show code) <> " (" <> decodeUtf8 (statusMessage status) <> ") when trying to connect to proxy\n" <> decodeUtf8 bs)
+                ResponseBodyTooShort a b               -> (False, "Request body unexpected size (too short); expected " <> T'.pack (show a) <> " but received" <> T'.pack (show b))
                 ResponseTimeout                        -> (True, "Timed-out waiting for server's response")
-                StatusCodeException resp bs            -> (False, unlines ["non-2** response:", indent 4 $ fromString (show resp), indent 4 (fromString $ BS'.unpack bs)])
+                StatusCodeException resp bs            -> (False, T'.unlines ["non-2** response:", indent 4 $ T'.pack (show resp), indent 4 (decodeUtf8 bs)])
                 TlsNotSupported                        -> (False, "Manager doesn't support TLS. Are you using tlsManagerSettings from http-client-tls?")
-                TooManyRedirects resps                 -> (False, "Too Many Redirects (" <> (fromString . show $ length resps) <> "):" <> fst (foldr (\(fromString . show -> resp) (b,acc) -> ("Response #" <> (fromString $ show acc) <> ":" <> (indent 4 resp) <> b, succ acc :: Int)) (mempty,0) resps))
-                WrongRequestBodyStreamSize a b         -> (False, "Request body unexpected size; expected " <> (fromString $ show a) <> " but received " <> (fromString $ show b))
+                TooManyRedirects resps                 ->
+                    let v = fst $ foldr (\(T'.pack . show -> resp) (b,acc) -> ("Response #" <> T'.pack (show acc) <> ":" <> (indent 4 resp) <> b, succ acc :: Int)) (mempty,0) resps
+                    in (False, "Too Many Redirects (" <> (T'.pack . show $ length resps) <> "):" <> v)
+                WrongRequestBodyStreamSize a b         -> (False, "Request body unexpected size; expected " <> T'.pack (show a) <> " but received " <> T'.pack (show b))
             )
-        InvalidUrlException url reason -> (False, (fromString url) <> " is malformed because: " <> (fromString reason))
-    pnn :: (StringLike str) => Int -> str
-    pnn (last . show -> n) = fromString $ n : case n of
+        InvalidUrlException url reason -> (False, (T'.pack url) <> " is malformed because: " <> (T'.pack reason))
+    pnn :: Int -> Text
+    pnn (show -> n) = T'.pack $ n <> case last n of
         '1' -> "st"
         '2' -> "nd"
         '3' -> "rd"
         _   -> "th"
+-}
+
+-- common Options:
+-- "queryParam" =: value -- value :: ToHttpApiData a.
+-- basicAuth "uname" "pass"
+-- TODO: continue here! c:
+
+-- | Given the number of things I'll be creating ExceptT's for, maybe I should have [forall a. Show a => a] as the ExceptT parameter.
+getSample :: BugT String [String] IO ()
+getSample = do
+    exampleBase <- withExceptT show $ (\case Left e -> e) <$> parseURI' "https://google..com/"
+    url <- withBugAccum pure . withExceptT show $ parseRelTo exampleBase "http://wiki.c2.com/?WhyWeLoveLisp"
+    case url of
+        Left x -> f x
+        Right x -> f x
+    where
+        f :: (MonadIO m, Monoid w, IsString e) => (Url scheme, Option scheme) -> BugT e w m ()
+        f (u,o) = do
+            resp <- req GET u NoReqBody bsResponse o
+            liftIO . BSC'.putStrLn $ responseBody resp
+
+-- | The preferred normalization. Convenience function.
+normalize :: URIRef a -> BS'.ByteString
+normalize = normalizeURIRef' aggressiveNormalization
+
+-- | Fails on non-http(s) schemes.
+absURIToUrl :: (Monad m, Monoid w) => URIRef Absolute -> BugT URIParseError w m (Either (Url 'Http, Option 'Http) (Url 'Https, Option 'Https))
+absURIToUrl u@(URI {..}) =
+    let p :: Url a -> Url a -- type signatures given to keep polymorphism
+        p z = foldl' (\b a -> b /: decodeUtf8 a) z (BSC'.split '/' uriPath)
+        q :: Option a
+        q = foldMap (uncurry (=:) . both decodeUtf8) (queryPairs uriQuery)
+    in case BSC'.map toLower $ schemeBS uriScheme of
+        "https" -> pure $ Right (p (https $ authToText uriAuthority), q)
+        "http" -> pure $ Left (p (http $ authToText uriAuthority), q)
+        _ -> err $ OtherError $ "absURIToUrl failed on \"" <> BSC'.unpack (serializeURIRef' u) <> "\"; we don't support non-http(s) schemes."
+    where
+        authToText :: Maybe Authority -> Text
+        authToText = decodeUtf8 . hostBS . authorityHost . fromJust
+
+-- | The most convenient way to parse a URI for a scraper. Combines @parseURI'@ and @relTo@.
+parseRelTo :: (Monoid w, Monad m, IsString w) => URIRef Absolute -> BS'.ByteString -> BugT URIParseError w m (Either (Url 'Http, Option 'Http) (Url 'Https, Option 'Https))
+parseRelTo base x = parseURI' x >>= either pure (`relTo` base) >>= absURIToUrl
+
+-- produce an absolute URL from a @parseURI'@ value
+-- for JH scraper, should use with bytestring-trie? Prob., since all ASCII chars.
+relTo :: (Monoid w, Monad m, IsString w) => URIRef a -> URIRef Absolute -> BugT e w m (URIRef Absolute)
+parsed `relTo`  (URI {..}) = case parsed of
+    RelativeRef {..} -> do
+        maybe (return ()) (warn . ("rrAuthority filled: " <>) . fromString . show) rrAuthority
+        return $ URI uriScheme uriAuthority rrPath rrQuery rrFragment
+    a@(URI _ _ _ _ _) -> return a
+
+-- Made to parse href elements from HTML. Does not account for hand-written URLs like "site.com/page1", as this would not work in a browser.
+parseURI' :: (Monad m, Monoid w) => BS'.ByteString -> BugT URIParseError w m (Either (URIRef Absolute) (URIRef Relative))
+parseURI' s = case parseURI laxURIParserOptions s of
+    Left (MalformedScheme MissingColon) -> either err (pure . Right) $ parseRelativeRef laxURIParserOptions s
+    Left o -> err o
+    Right r -> pure $ Left r

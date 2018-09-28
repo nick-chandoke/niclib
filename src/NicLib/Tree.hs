@@ -1,5 +1,3 @@
-{-# LANGUAGE NamedFieldPuns, RankNTypes, LambdaCase, FlexibleContexts #-}
-
 module NicLib.Tree
 ( DoubleTree
 , doubleTree
@@ -18,6 +16,14 @@ import qualified Data.ListLike as LL
 import Data.ListLike.String (StringLike, toString)
 import Data.Graph -- containers
 
+{-
+data Rel = Child | Sibling | Parent deriving (Show, Eq, Ord)
+instance As (Graph Rel a) where
+    type To (Graph a) = Tree a
+    as = 
+-}
+
+-- TODO: deprecate in favor of as @(Graph a) (see above)
 -- | a Tree (Tree a, a) allows all the Functor, Traversable &c instances for Tree. DoubleTree is isomorphic with the type (Tree a, a), however; we can traverse up the tree by recursively using the first element (parent tree) of the tuple, and so navigate the tree completely. I have DoubleTree as a Tree around the tuple simply because it allows all the functionality that the Tree module provides. I could easily derive similar or parallel instances or methods for the (Tree a, a) type, but currently I have no need.
 type DoubleTree a = Tree (Tree a, a) -- doubly-linked Tree; each child/node has a reference to its parent
 
@@ -29,13 +35,6 @@ doubleTree pv p@(Node v children) = Node (Node pv [], v) (dt p <$> children)
     where 
         dt :: Tree a -> Tree a -> Tree (Tree a, a)
         dt parent (Node v children) = Node (parent, v) (dt parent <$> children)
-
-{-
-data Rel = Child | Sibling | Parent deriving (Show, Eq, Ord)
-
-toGraph :: Tree a -> Graph
-toGraph = 
--}
 
 -- | returns branches matching the ordered list of predicates.
 -- returns Nothing if root fails to match. Note that the maximum depth of the returned tree is the length of the predicate list; to take all children past a given depth, use repeat, e.g. to get a Tree consisting of all branches from <!doctype> to descendants of <head>: findByPath (((\str -> \case NodeElement e -> eltName e == str; _ -> False) <$> ["DOCTYPE", "html", "head"]) ++ repeat (const True)) tree

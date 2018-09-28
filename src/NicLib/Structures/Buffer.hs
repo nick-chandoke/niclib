@@ -1,6 +1,4 @@
 {-# OPTIONS_GHC -funbox-strict-fields -O2 -optc-O2 #-}
-{-# LANGUAGE DeriveFunctor #-}
-
 -- | push elements in a fixed-size buffer; if buffer is full at time of element insertion, oldest element is pushed out from the buffer
 -- intended to be imported qualified
 -- undefined behavior for Buffers of size greater than (maxBound :: Int)
@@ -18,10 +16,12 @@ module NicLib.Structures.Buffer
 
 import qualified Data.Vector as V
 import Data.Vector.Unboxed (Unbox)
-import Data.Semigroup
-import GHC.Prim
 
-data Buffer a = Buffer { index :: !Int, size :: !Int, sequence :: V.Vector a } deriving (Eq, Ord, Functor)
+data Buffer a = Buffer
+    !Int -- index
+    !Int -- size
+    (V.Vector a) -- data
+    deriving (Eq, Ord, Functor)
 instance (Show a, Unbox a) => Show (Buffer a) where show = show . get
 
 -- | allocate memory for a buffer of given size
@@ -29,11 +29,12 @@ create :: Int -> Buffer a
 create size = Buffer 0 size (V.replicate size undefined)
 
 get :: Unbox a => Buffer a -> V.Vector a
-get (Buffer i s b) = case i `mod` s of
-    i' -> if i < s then V.slice 0 i' b else V.slice i' (s - i') b <> V.slice 0 i' b
+get (Buffer i s b) =
+    let i' = i `mod` s
+        p = V.slice 0 i' b
+    in if i < s then p else V.slice i' (s - i') b <> p
 
 -- I'm uncomfortable that I'm returning a new buffer rather than the same buffer in the ST monad
 -- see <http://hackage.haskell.org/package/array-0.5.1.1/docs/Data-Array-IO.html>
 push :: Unbox a => Buffer a -> a -> Buffer a
-push (Buffer i s b) e = case i `mod` s of -- so that, god forbid someone should call push on a buffer more than (maxBound :: Int) times, the index is correct
-    i' -> Buffer (i + 1) s (V.update b (V.singleton (i', e))) -- I'm not clear on how to use V.modify, so I'm using V.update....
+push (Buffer i s b) e = Buffer (i + 1) s (V.update b (V.singleton (i `mod` s, e))) -- I'm not clear on how to use V.modify, so I'm using V.update....

@@ -1,12 +1,3 @@
-{-# LANGUAGE
-  FlexibleInstances
-, FlexibleContexts
-, LambdaCase
-, MonadComprehensions
-, NamedFieldPuns
-, OverloadedStrings
- #-}
-
 -- | general HTML manipulation. Re-exports Taggy. Very useful for scraping.
 module NicLib.HTML
 ( module Text.Taggy
@@ -32,13 +23,13 @@ module NicLib.HTML
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State
 import Control.Monad.Catch
-import Data.Foldable (find)
+import Data.Foldable
 import Data.ListLike (ListLike)
 import Data.ListLike.String
 import Data.String (IsString)
 import Data.Text.Lazy.Encoding (decodeUtf8')
 import Data.Tree as Tree
-import NicLib.IO
+import NicLib.Errors
 import NicLib.NStdLib
 import NicLib.Net
 import NicLib.URL

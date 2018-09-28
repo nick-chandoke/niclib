@@ -1,6 +1,6 @@
 author: Nicholas Chandoke
 build-type: Simple
-cabal-version: >=1.9.2
+cabal-version: >=1.10
 bug-reports: https://github.com/nick-chandoke/niclib/issues/new
 copyright: Copyright (c) 2016-2018 Nicholas Chandoke
 description: URL, Filesystem, networking, and aeson helper methods. Miscellaneous functions, and implementation of Trie, a buffer that holds n most recent inserts/pushes, and a set that's memory efficient for storing redundant data.
@@ -16,13 +16,14 @@ tested-with: GHC ==8.4.2
 version: 0.1.2
 
 library
-  ghc-options: -O2
+  ghc-options: -O2 -Wno-type-defaults
   hs-source-dirs: src
   exposed-modules:
       NicLib.Aeson
       NicLib.Errors
       NicLib.FileSystem
       NicLib.List
+      NicLib.Net
       NicLib.NStdLib
       NicLib.Set
       NicLib.Statistics
@@ -51,16 +52,45 @@ library
 --    streaming-commons,
       random-fu,
       random-source,
+      req,
       transformers>=0.5.5.0,
       text,
       time,
       unix,
---    uri-bytestring,
+      uri-bytestring,
       unordered-containers,
---    uri-encode,
       vector
---default-extensions:
---other-extensions:
+  default-extensions:
+      ApplicativeDo,
+      CPP,
+      DataKinds,
+      DefaultSignatures,
+      DeriveDataTypeable,
+      DeriveFunctor,
+      DeriveGeneric,
+      FlexibleContexts,
+      FlexibleInstances,
+      GeneralizedNewtypeDeriving,
+      LambdaCase,
+      MonadComprehensions,
+      MultiParamTypeClasses,
+      MultiWayIf,
+      NamedFieldPuns,
+      NoMonomorphismRestriction,
+      NumDecimals,
+      OverloadedLists,
+      OverloadedStrings,
+      RankNTypes,
+      RecordWildCards,
+      ScopedTypeVariables,
+      StandaloneDeriving,
+      TupleSections,
+      TypeApplications,
+      TypeFamilies,
+      TypeSynonymInstances,
+      UndecidableInstances,
+      ViewPatterns
+  default-language: Haskell2010
 
   if !impl(ghc >= 8.4)
     build-depends: semigroups >= 0.16 && < 0.19

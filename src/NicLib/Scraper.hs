@@ -1,14 +1,4 @@
 {-# OPTIONS_GHC -Wall #-}
-{-# LANGUAGE
-  FlexibleInstances
-, FlexibleContexts
-, LambdaCase
-, OverloadedStrings
-, RankNTypes
-, TupleSections
-, ViewPatterns
-#-}
-
 -- | production-ready scraper framework
 -- How to sequence scrapers:
 -- do
@@ -16,10 +6,11 @@
 --         scraper₂
 --     scraper₃
 -- will execute scraper₁, then execute scraper₂ over all the URLs that scraper₁ produced/put. Then runs scraper₃. In other words, scraper₂ is a subpart of scraper₁, but the running of scraper₁ is unrelated to the running of scraper₃.
+-- The WriterT of Text logs warnings; one may suppose then that errors cause the scraper to terminate, and are encoded by the Left value of the ExceptT
 module NicLib.Scraper
 ( Scraper
 , Scraper'
-, URLDOM
+, DOMURL
 , runScraper
 , assumingThat
 , download
@@ -43,7 +34,7 @@ import Data.Random
 import Data.Random.Source.DevRandom
 import Network.URI.Encode (decode) -- package uri-encode
 import NicLib.HTML
-import NicLib.IO
+import NicLib.Errors
 import NicLib.List
 import NicLib.NStdLib
 import NicLib.Net
@@ -63,12 +54,13 @@ import Data.String (IsString)
 
 -- something along the lines of: collect -> sort/size-up -> consider each in set (elements, unions and intersections,...some subset of the power set, identified by some predicates, or trying things to see if they make sense or work or fail.)
 
-type Scraper a = forall m s. (MonadIO m, MonadCatch m, StringLike s) => StateT (S.Set URL) (WriterT T'.Text (ExceptT s m)) a
-type Scraper' s m a = StateT (S.Set URL) (WriterT T'.Text (ExceptT s m)) a -- for using multiple Scraper's in type signature with common monad
-type URLDOM = (Node, URL) -- used to describe a resource by value and reference
+type Scraper a = forall e m s. (MonadIO m, MonadCatch m, StringLike s) => StateT (S.Set URL) (BugT e s m) a
+type Scraper' s m a = StateT (S.Set URL) (BugT s m) a -- for using multiple Scraper's in type signature with common monad
+type DOMURL = (Node, URL) -- used to describe a resource by value and reference
 
+-- | runScraper calls runWriterT, and makes the pattern ((x,y),z) into (x,y,z)
 runScraper :: (MonadIO m, MonadCatch m, StringLike s) => Scraper' s m a -> S.Set URL -> m (Either s (a, S.Set URL, T'.Text))
-runScraper = cT ((fmap . fmap) (\((x, y), z) -> (x, y, z)) . runExceptT . runWriterT) runStateT
+runScraper = (fmap . fmap) (\((x, y), z) -> (x, y, z)) . runExceptT . runWriterT <% runStateT
 -- print errors from WriterT if any: when (not $ T'.null errors) $ TIO.hPutStrLn stderr ("Errors:\n" <> errors)
 
 -- | test an assumption; if assumption fails, user will be asked whether they want to continue; returns True if the user wants to continue; False if they don't
@@ -83,16 +75,16 @@ download f url@(ppURL -> ppurl) = case f . decode . snd . fromJust $ breakAtLast
     filename -> lift . lift $ evalStateT (fetch url) mempty >>= liftIO . BS.writeFile filename -- TODO: create cookie and HTTP header combinators, for particular sending of headers and cookies
 
 -- | the most basic scraper; one must use this
-withDOM :: (MonadIO m, MonadCatch m, ListLike s Char, StringLike s, IsString s, Semigroup s) => (URLDOM -> Scraper' s m a) -> Scraper' s m [a]
+withDOM :: (MonadIO m, MonadCatch m, ListLike s Char, StringLike s, IsString s, Semigroup s) => (DOMURL -> Scraper' s m a) -> Scraper' s m [a]
 withDOM f = do
-    (S.toList -> urls) <- get
+    (S.toList -> urls) <- get -- TODO: usually use a Trie instead of a Set, for URLs.
     forM urls $ \url -> do
         dom <- lift . lift . ExceptT $ domFromURL url
         f (dom, url)
 
 -- | do stuff with URLs scraped from DOM
 -- please remember that these are the URLs scraped from DOM! They are not the URLs from state! (i.e. the URLs at which the DOMs are located)
-withPage'sURLs :: (MonadIO m, MonadCatch m, StringLike s) => URLDOM -> (S.Set URL -> Scraper' s m a) -> Scraper' s m a
+withPage'sURLs :: (MonadIO m, MonadCatch m, StringLike s) => DOMURL -> (S.Set URL -> Scraper' s m a) -> Scraper' s m a
 withPage'sURLs (dom, url) f = case scrapeURLs dom (Just url) of
     (S.toList -> malformed, wellformed) -> do
         when (not $ null malformed) (lift . tell $ "Malformed URLs found on " <> ppURL url <> ":\n" <> T'.unlines malformed <> "\n")

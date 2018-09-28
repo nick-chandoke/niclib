@@ -1,8 +1,7 @@
-{-# LANGUAGE NoMonomorphismRestriction #-}
-
 -- | Operations that I want to merge into the ListLike package, but haven't yet (before doing that I want ListLike to be in terms of type families rather than func deps, so that both char8 bytestring and word8 bytestring can both be listlike's)
 module NicLib.List
 ( breakAtLast
+, replaceAll
 , breakOn
 , chunksOf
 , commonPrefixes
@@ -20,6 +19,11 @@ import Control.Applicative ((<|>))
 import NicLib.NStdLib
 import qualified Data.List as L
 import qualified Data.ListLike as LL
+
+-- | replace all occurences of old with new. Using Traversable because we're replacing elements "in-place"; we're preserving structure and type.
+-- cf. Foldable, which does not necessarily preserve structure.
+replaceAll :: (Eq b, Traversable t) => b -> b -> t b -> t b
+replaceAll old new = fmapDefault (bool' id (const new) (==old))
 
 -- | remove an element from head, if head is that element, for ListLike
 rmTrailing :: (LL.ListLike list item, Eq item) => item -> list -> list
@@ -58,9 +62,9 @@ commonPrefixes = go LL.empty where
     go common a b =
         let v = if LL.null common then Nothing else Just (common, a, b)
             w = do -- isNothing when either list runs-out, or heads of list don't equal
-            (x,xs) <- LL.uncons a
-            (y,ys) <- LL.uncons b
-            if (x == y) then go (LL.snoc common x) xs ys else v
+                (x,xs) <- LL.uncons a
+                (y,ys) <- LL.uncons b
+                if (x == y) then go (LL.snoc common x) xs ys else v
         in w <|> v -- if we leave-off (<|> v), then if a is a sublist of b or vice-versa, commonPrefixes will incorrectly return Nothing
 
 -- | Data.Text.replace generalized to ListLike's

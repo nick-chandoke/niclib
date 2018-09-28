@@ -1,13 +1,10 @@
-{-# LANGUAGE
-   LambdaCase
- , MultiWayIf
- , OverloadedStrings
- , TupleSections
- , ViewPatterns
-#-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- AccumT's are used mostly as WriterT's herein; you'll see a lot of things in the vein of runAccumT (add ... >> ...) mempty
 -- | Handle logging, filtering for, and printing, errors
+-- There are two ways I can see using warnings and errors: (1) always use BugT, thus allowing for a combination of either at any time; (2) be polymorphic in the return type of many functions (ExceptT, AccumT, WriterT, or StateT)
+-- I'm unsure how much faster programs using just one-layer-deep transformers are than those that use BugT (which has two layers of transformers.)
 -- btw, I may use the term "bug-out" to refer to a BugT returning a Left-like value
 module NicLib.Errors
 ( BugT
@@ -15,31 +12,54 @@ module NicLib.Errors
 , runBugT
 , warn
 , err
+, orLog
 , orError
+, with -- for some reason I get a parse error when I tried naming it 'by'
+, withBugAccum
+, mapBugAccum
+, toError
+, toWarning
 , dumpWarn
 , getWarning
 , stderrOnFail
 , stderrOnFailAndExit
 , toStderr
 , liftME
+, mtell
 ) where
 
 import Control.Monad.Catch
 import Control.Monad.Trans.Accum
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Except
+import Control.Monad.Trans.Writer
 import Data.ListLike (StringLike)
 import Data.ListLike.String hiding (fromString)
-import Data.String (IsString)
+import Data.Text (Text)
 import NicLib.NStdLib
 import System.Exit
 import System.IO (stderr, hPutStrLn)
 import System.IO.Error
 
+-- | Applies @<>@ to monoidal writer values and accumulations:
+-- @runWriter $ mtell "hello!" <> return (Sum 4) <> return (Sum 20) <> mtell " hoho"@ --> (Sum {getSum = 24},"hello! hoho")
+-- I don't remember why I wrote this. I'm leaving this orphan instance here anyway, just in case.
+-- I mean I don't even use @WriterT@ anymore; I prefer @AccumT@.
+instance (Applicative m, Monoid s, Monoid a) => Semigroup (WriterT s m a) where
+    (<>) = morphism46 WriterT runWriterT (<>)
+
+instance (Applicative m, Monoid s, Monoid a) => Monoid (WriterT s m a) where
+    mempty = pure mempty
+    mappend = (<>)
+
+-- | Control.Monad.Trans.Writer.tell, but monoid-compatible (rather than returning (), returns mempty; thus, dosen't affect value, but in different way)
+mtell :: (Monoid s, Monoid a, Monad m) => s -> WriterT s m a
+mtell = mempty <=< tell
+
 -- | Combination of the ExceptT and AccumT monads. Allows logging warning messages, or exiting on errors.
 -- Encourages assuming that anything that could generate a warning could, sometime through revisions of the program, produce an error,
 -- and conversely that anything that produces a fatal error is error-prone enough that it may output some helpful warning messages.
-type BugT e w m a = ExceptT e (AccumT w m) a
+type BugT e w m = ExceptT e (AccumT w m)
 
 runBugT :: Monoid w => BugT e w m a -> m (Either e a, w)
 runBugT = flip runAccumT mempty . runExceptT
@@ -51,12 +71,19 @@ bugT = ExceptT . AccumT . const
 warn :: (Monoid w, Monad m) => w -> BugT e w m ()
 warn = lift . add
 
--- | short-circuit computation because it cannot continue further
--- like return, but for Left's rather than Right's
+withBugAccum :: (Monad m, Monoid w, Monoid w') => (w -> w') -> BugT e w m a -> BugT e w' m a
+withBugAccum f = mapBugAccum (bugT . pure . second f)
+
+mapBugAccum :: (Monad m, Monoid w, Monoid w') => ((Either e a, w) -> BugT e w' m a) -> BugT e w m a -> BugT e w' m a
+mapBugAccum f = bugT . morphism240 runBugT f runBugT
+
+-- | Short-circuit computation because it cannot continue further
+-- Like return, but for Left's rather than Right's
+-- Remember that BugT is a newtype around ExceptT; this means that err can lift an @e@ into a @BugT e w m a@ as well as an @ExceptT e m a@
 -- Compare @err@ with the Alternative instance for ExceptT, which returns a successful value or a monoidal accumulation of failures:
 -- @runExcept $ err ["uh-oh!"] <|> err ["nono!"]@ --> Left ["uh-oh!", "nono!"]
 -- @runExcept $ err ["uh-oh!"] <|> return 4 <|> err ["nono!"]@ --> Right 4
--- @Data.Foldable.asum@ is a good way of trying @ExceptT@'s until one succeeds, logging errors along the way.
+-- @Data.Foldable.asum@ is a good way of trying @ExceptT@'s until one succeeds, logging all failures if whole computation fails.
 err :: Applicative m => e -> ExceptT e m a
 err = ExceptT . pure . Left
 
@@ -64,11 +91,24 @@ err = ExceptT . pure . Left
 getWarning :: (Monoid w, Monad m) => BugT e w m w
 getWarning = lift look
 
--- | error that, along with a user-given description of the error, tries to append a detailed description. I'm not sure whether to use System.IO.Error's @userError@, @mkIOError@, and @annotateIOError@, to return an @IOError@, or keep within @ExceptT@.
--- These error descriptions are better than nothing, but are quite unhelpful (e.g. "filesystem object already exists" - which one?)
+-- | promote a warning to an error. Not sure if this ever makes sense. See @toWarning@'s rationale. I can't see that rationale working backwards.
+-- Regardless, if you need it, here it is!
+toError :: (Monad m, Eq e, Monoid e, Monoid w) => AccumT e m a -> BugT e w m a
+toError = bugT . morphism240 (flip runAccumT mempty) (\(a, e) -> if e == mempty then pure a else err e) runBugT
+
+-- | demote an error to a warning. Consider that although a single ExceptT may fail or succeed, when running multiple different ExceptT's all toward the same purpose, the success of any one of them means success. Thus all the failed attempts could be mere warnings (i.e. logged,) or disregarded.
+-- returns Nothing if a warning was added; returns Just the Right value if there was one.
+toWarning :: (Monoid w, Monad m) => ExceptT w m a -> BugT e w m (Maybe a)
+toWarning = lift . ((\case Left e -> add e >> return Nothing; Right x -> return $ Just x) <=< lift . runExceptT)
+
+-- | On exception catch, do something with both a user-given description of the error, and a detailed description of the problem. I'm not sure whether to use System.IO.Error's @userError@, @mkIOError@, and @annotateIOError@, to return an @IOError@.
+-- Use with the @with@ function (or if you're using @Lucid@ man-up and use @$@ instead.) Example:
+-- @liftIO (readFile "not here!") `orLog` "Error reading file 'nothere'!" `with` err@
+-- One may use @err@ or any method of your preference that works. Remember that the function you supply via @with@ must instance @MonadCatch@! Thus, for instance, @warn@ will not work, unless someone instances @MonadCatch m => MonadCatch (AccumT w m)@.
+-- These error descriptions are better than nothing, but are quite unhelpful (e.g. "filesystem object already exists" - which one?) -- TODO: which descriptions was I talking about here?
 -- please always include descriptive error messages that specify concrete values (e.g. song.mp3 rather than "file" or "a file") that pertain to the nature of the program you're writing. If you fail to account for something, these extra messages may be helpful
-orError :: (MonadCatch m, Semigroup str, IsString str) => ExceptT str m a -> str -> ExceptT str m a
-action `orError` msg = catch action $ \e ->
+orLog :: (MonadCatch m) => m a -> Text -> (Text -> m a) -> m a
+action `orLog` msg = \l -> catch action $ \e ->
     let desc = if | isPermissionError e    -> " (permission error)" -- TODO: check UID against owner's UID of resource we're trying to access; find exactly where and what the permission (or owner) mismatch is
                   | isAlreadyExistsError e -> " (filesystem object already exists)"
                   | isDoesNotExistError e  -> " (filesystem object doesn't exist)"
@@ -77,7 +117,15 @@ action `orError` msg = catch action $ \e ->
                   | isEOFError e           -> " (end of file reached too early (this is a programming error))"
                   | isIllegalOperation e   -> " (\"illegal operation\")"
                   | otherwise              -> ""
-    in err $ msg <> desc
+    in l $ msg <> desc
+
+-- | @orError = orLog with err@
+orError :: (MonadCatch m) => ExceptT Text m a -> Text -> ExceptT Text m a
+orError = orLog %> ($err) -- somewhy orLog %> with err doesn't work?
+
+-- | @with = $@.
+with :: (a -> b) -> a -> b
+with = ($)
 
 -- | Printing functions. Useful for CLI apps.
 
@@ -105,21 +153,10 @@ action `orError` msg = catch action $ \e ->
 --             when (n > fromIntegral 100) $ warn "You're pushing a number greater than 100?"
 --             maybe (return ()) err $ sql "INSERT INTO numbers (value) VALUES (" <> T'.pack (show n) <> ")" -- hypothetical function sql :: Text -> IO (Maybe Text), where the Text is an error message
 -- @
--- dumpWarn is designed to return the results of the logging function in the original monad (instead of @squash@ing them together) so that you can keep each dumpWarn call separate, in case you want to dump to multiple data stores, where there's expectation that some dumps may fail.
+-- @dumpWarn@ is designed to return the results of the logging function in the original monad (instead of @squash@ing them together) so that you can keep each @dumpWarn@ call separate, in case you want to dump to multiple data stores, where there's expectation that some dumps may fail.
 -- btw, the above example is hypothetical and maybe wouldn't compile, but it should give a good idea of how to use the BugT monad and dumpWarn
 dumpWarn :: (Monoid ω, Monoid w, Monad m) => (w -> BugT η ω m a) -> BugT e w m (Either η a, ω)
-dumpWarn f = lift . lift $ runBugT getWarning >>= runBugT . f . snd
--- dumpWarn f = morphism239 (lift . lift) runBugT getWarning (f . snd)
--- TODO: note that this does not work because the first runBugT is not the same type as the latter runBugT, due to monomorphism restriction. We need to identify exactly the most general type signature in order to use morphism239.
-
-{-
--- morphism239 performs a composition of functions on monad transformers that share a common inner monad and constructor but have different parameters, e.g. @State Text m@ and @State String m@
--- @z@ is a "zipping" function, e.g. @lift . lift@
--- @x@ is an "extraction" function, e.g. @runStateT@
--- @f@ and @g@ are just some functions
-morphism239 :: (Monad m) => (m a -> t1) -> (t2 -> m a) -> t2 -> (a -> t2) -> t1
-morphism239 z x f g = z (x f >>= x . g)
--}
+dumpWarn f = lift . lift $ morphism240 runBugT (f . snd) runBugT getWarning -- the first runBugT is not the same as the second runBugT! They operate in the same monad, but over different types; thus I must specify this general function twice so that it reifies into two different more-specific functions.
 
 -- | prints a StringLike error message on failure; returns m () on success
 stderrOnFail :: (StringLike s, MonadIO m) => ExceptT s m a -> m ()

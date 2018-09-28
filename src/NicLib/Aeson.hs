@@ -1,4 +1,3 @@
-{-# LANGUAGE RankNTypes, LambdaCase, OverloadedStrings, ScopedTypeVariables #-}
 -- | Superset of Aeson; introduces 3 functions that just make JSON parsing easy: (pickJSONField "{k:'v'}" "k" :: Text) --> "v"
 -- exports Aeson, too; just import NicLib.Aeson instead of Data.Aeson.
 module NicLib.Aeson

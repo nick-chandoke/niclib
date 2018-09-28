@@ -1,20 +1,3 @@
-{-# OPTIONS_GHC -Wno-type-defaults #-}
-{-# LANGUAGE
-  CPP
-, DeriveFunctor
-, FlexibleContexts
-, FlexibleInstances
-, LambdaCase
-, MultiParamTypeClasses
-, MultiWayIf
-, NamedFieldPuns
-, OverloadedStrings
-, StandaloneDeriving
-, TupleSections
-, UndecidableInstances
-, ViewPatterns
-#-}
-
 -- | Miscellaneous data structures and functions that make everyday coding easier. My own Prelude, plus my own functionality.
 module NicLib.NStdLib
 ( module Data.Semigroup
@@ -26,53 +9,53 @@ module NicLib.NStdLib
 , module Data.Bool
 , module Data.Functor.Identity
 , module Control.Monad.IO.Class
-, mtell
-, (&)
-, on
-, (>*>)
-, OrderBy(..)
-, uncons
-, bimap
-, both
-, (<&&>)
-, (<||>)
-, (?)
 , (!!?)
-, (↔)
-, sxor
-, pxor
-, xor
-, ffilter
+, (%>)
+, (&)
+, (<%)
+, (<&&>)
 , (<&>)
-, readMaybe
-, replaceAll
+, (<||>)
+, (>*>)
+, (?)
+, (↔)
+, As(..)
+, OrderBy(..)
+, bimap
 , bool'
-, Isomorphism(..)
+, both
 , cT
+, ffilter
+, findM
 , foldBins
 , foldBins'
-, (<%)
-, (%>)
-, replicateM'
 , foldMapM
+, morphism239
+, morphism240
+, morphism46
+, on
 , partitionM
-, findM
+, pxor
+, readMaybe
+, replicateM'
 , showBin
+, sxor
+, uncons
+, whenM
+, xor
 ) where
 
-import Numeric (showIntAtBase)
 import Control.Applicative
 import Control.Arrow
 import Control.Category
 import Control.Monad
-import Control.Monad.Trans.Class
-import Control.Monad.Trans.Except
-import Control.Monad.Trans.Writer
 import Control.Monad.IO.Class
+import Control.Monad.Trans.Accum (AccumT, add, runAccumT)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT(..), runExceptT)
 import Data.Bifunctor as BiF
 import Data.Bool
 import Data.Char
-import Data.Either (either)
 import Data.Function ((&), on, fix) -- importing everything messes with the ArrowCurry definition
 import Data.Functor.Identity
 import Data.List
@@ -83,15 +66,10 @@ import Data.Set (Set)
 import Data.String
 import Data.Traversable
 import Data.Tree
-import Data.Word
+import Numeric (showIntAtBase)
 import Prelude hiding (GT, LT, EQ, (.), id, curry, uncurry)
--- import Text.Taggy (Node, nodeChildren) -- for its Isomorphism instance
-import qualified Data.ByteString.Char8 as BS'
-import qualified Data.ByteString.Lazy.Char8 as BS
 import qualified Data.ListLike as LL
 import qualified Data.Set as S
-import qualified Data.Text as T'
-import qualified Data.Text.Lazy as T
 import qualified Prelude
 
 -- | OrderBy inherits Eq & Ord instances from left tuple argument, ignoring right tuple argument
@@ -101,12 +79,12 @@ instance Eq a => Eq (OrderBy a b) where (unOrderBy -> (a,_)) == (unOrderBy -> (c
 instance Ord a => Ord (OrderBy a b) where compare (unOrderBy -> (a,_)) (unOrderBy -> (c,_)) = compare a c
 
 infixl 3 <&&>
--- | Convenient particularly in (->), for composition of unary functions, e.g. filter (odd <&&> (`divides` 5))
+-- | Convenient particularly in @(->)@, for composition of unary functions, e.g. @filter (odd <&&> (`divides` 5))@
 (<&&>) :: Applicative f => f Bool -> f Bool -> f Bool
 (<&&>) = liftA2 (&&)
 
 infixl 3 <||>
--- | Convenient particularly in (->), for composition of unary functions, e.g. filter (isDigit <||> (=='.'))
+-- | Convenient particularly in @(->)@, for composition of unary functions, e.g. @filter (isDigit <||> (=='.'))@
 (<||>) :: Applicative f => f Bool -> f Bool -> f Bool
 (<||>) = liftA2 (||)
 
@@ -117,9 +95,14 @@ infixr 1 ?
 (?) :: Bool -> (a, a) -> a
 p ? x = if p then fst x else snd x
 
-infixr 2 ↔ -- ^K <> in vim
+infixr 2 ↔
 (↔) :: a -> a -> (a, a)
 (↔) = (,)
+
+-- | So useful when doing, e.g. @when (directory is empty) ⋯@!
+-- btw, whenM cannot exist for Applicatives. Also @whenM@ cannot be expressed in terms of @bool'@.
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM c v = flip when v =<< c
 
 -- deriving instance Functor ((,,) a b)
 
@@ -151,14 +134,9 @@ infixr 2 >*>
 (>*>) :: ArrowCurry cat => cat a1 (a2, b) -> cat a2 (cat b c) -> cat a1 c
 x >*> h = x >>> uncurry h
 
--- | replace all occurences of old with new. Using Traversable because we're replacing elements "in-place"; we're preserving structure and type.
--- cf. Foldable, which does not necessarily preserve structure.
-replaceAll :: (Eq b, Traversable t) => b -> b -> t b -> t b
-replaceAll old new = fmapDefault (bool' id (const new) (==old))
-
 readMaybe :: Read a => String -> Maybe a
 readMaybe str = case reads str of
-    [(x,"")] -> Just x
+    [(x,[])] -> Just x
     _ -> Nothing
 
 -- | like bool in Data.Bool, but allows pointfree manipulation like Data.Maybe.maybe (for (->) Applicative, its most common use; or, sometimes one may use it in other Applicatives). Example: @bool' ((-) 10) (+1) (>3)@ equals (in the (->) monoidal functor) @\n -> if n < 3 then n + 1 else n - 10@
@@ -166,102 +144,80 @@ bool' :: Applicative f => f d -> f d -> f Bool -> f d
 bool' = liftA3 bool
 
 -- | "if index in bounds then pure (item at index) else empty," but most efficient
-(!!?) :: (Num n, Eq n, Ord n, LL.ListLike list item, Alternative f) => list -> n -> f item
+(!!?) :: (Num n, Ord n, LL.ListLike list item, Alternative f) => list -> n -> f item
 xs !!? n
     | n < 0 = empty -- still works if negative, but faster to quit immediately if negative, rather than traverse a whole list just to return Nothing
     | otherwise = fix (\f i -> LL.uncons >>> \case Nothing -> empty; Just (h,t) -> if i == n then pure h else f (i + 1) t) 0 xs
 
-{- | zip any two foldables (a quick-to-write but slow to perform equivalent is zipFolds f = zipWith f (toList x) (toList y)
-zipFolds :: (Foldable t1, Foldable t2) => (a -> b -> c) -> t1 a -> t2 b -> [c]
-zipFolds f x y = undefined -}
+-- | @morphism239@ performs a composition of functions on monad transformers that share a common inner monad and constructor but have different parameters, e.g. @State Text m@ and @State String m@, or @ExceptT e m@ and @AccumT w m@. It's almost a generalization of mapAccumT, mapExceptT, etc., or like an inverse of @hoist@. It doesn't allow the inner monad to change, but does allow the outer monad to change.
+-- Here's an example from NicLib.Errors:
+-- @
+-- toError :: (Monad m, Monoid e, Eq e) => AccumT e m a -> ExceptT e m a
+-- toError = ExceptT . morphism239 (flip runAccumT mempty) (\(a, w) -> if w == mempty then pure a else err w) runExceptT
+-- @
+-- It seems pretty goofy to have @ExceptT@ and @runExceptT@ in the above example, but we need them both in order to typecheck @>>=@. This is conceptually like lifting the inner monad, then fmapping over it.
+-- By the way, you'll typically want to run some form of @lift . morphism239 ⋯@
+-- Note that f and f' must be the same level of monad transformer! For instance, the following does not work (see @NicLib.Errors.BugT@):
+-- @morphism239 (flip runAccumT mempty) undefined runBugT@; GHC will give an infinite type error because @runBugT@ acts on a 2-transformer stack (a @BugT@) but runAccumT runs on a 1-transformer stack (namely @AccumT@). What one could like to concieve is:
+-- @
+-- t m a ~ AccumT e m a
+-- s m x ~ BugT e w m x
+-- @
+-- suggesting that they share the common monad @m@. However, this is incorrect; in "s m x," s ~ ExceptT e, m ~ AccumT w m2, and x ~ x. The "nice" couple of types above are suggested by @lift :: m a -> t m a@. However, this does not imply @lift . lift :: m a -> t1 t2 m a@! The reality is that @lift . lift :: m a -> t1 (t2 m) a@! This is a bit of a double-edged sword. I'm sure if you've spent much time with transformers, you're familiar with the clash of Haskell's type system vs. monads associative composition in category theory. Yet I have not found mtl style or freer-monads quite nice enough to use. Feel free to convince me otherwise.
+-- Use @morphism240@ to lift this restriction, so that you can mix degrees of monad transformers. (morphism240 is just morphism239 but with a less specific type signature.) I chose to have both 239 and 240 because 239's signature is easy to understand, whereas 240's is so general that it's difficult to determine its use cases, and it's good to be aware/careful about manipulating monad transformers.
+morphism239 :: (Monad m)
+            => (t m a -> m b) -- ^ unwrap the first transformer. Usually run*, e.g. @runStateT@, @runBugT@
+            -> (b -> s m x) -- ^ a morphism that relates the prior two unwrapping functions
+            -> (s m x -> m y) -- ^ unwrap the second transformer. Usually the prior run* function
+            -> t m a
+            -> m y
+morphism239 = morphism240
 
--- | invertible information-preserving morphism between two types; must satisfy dual . iso = id = iso . dual
--- dual is defined in this class mostly to force you to check that your definition of iso is indeed structure-preserving!
--- TODO: generalize to Homomorphism type family, so that we can do things like, e.g. Text -> Query -> ByteString (this particular example cannot be Isomorphism Query (ListLike a), because a is different in iso vs. in dual! (Right?))
--- ALSO: create structure that allows automatic calculation (again, prob. impl. via higher kinds) quickest conversion between types (i.e. shortest path in graph where nodes are types and directed edges are homomorphisms)
--- Notice how, for (Integral a, Num a, Integral b, Num b) => we can convert between members of the same typeclass. Perhaps, rather than Isomorphism a b, I should do Homomorphism a b | a -> b where (~=>) :: a -> b....
-class Isomorphism a b where
-    {-# MINIMAL iso, dual #-}
-    -- | an isomorphism; typically there's only one isomorphism between any two structures
-    iso :: a -> b
-    -- | categorical dual of an isomorphism
-    dual :: b -> a
+-- | So morphism239 didn't cut it for ya? As you can see, 240 strings-together two Kleisli morphisms via a static morphism.
+-- You may be wondering why have both @f@ and @f'@; when I created 240, they *were the same function!* (see the code for @NicLib.Errors.dumpWarn@). They remain here for the time being; I'm considering making morphism240 :: m b -> (b -> c) -> (c -> m d) -> m d. I'm unsure how that'll affect clarity of code - especially that that uses 239.
+morphism240 :: Monad m => (a -> m b) -> (b -> c) -> (c -> m d) -> a -> m d
+morphism240 f t f' x = f x >>= f' . t
 
--- instance {-# OVERLAPPABLE #-} Isomorphism a String => Show a where show = iso
--- instance {-# OVERLAPPABLE #-} Isomorphism a String => IsString a where fromString = dual
+-- | Originally written for a @Monoid@ instance for @WriterT@
+morphism46 :: Applicative f => (f c -> d) -> (a -> f b) -> (b -> b -> c) -> a -> a -> d
+morphism46 wrap unwrap g = wrap <% on (liftA2 g) unwrap
 
-instance Isomorphism T'.Text BS'.ByteString where
-    iso = BS'.pack . T'.unpack
-    dual = T'.pack . BS'.unpack
+-- | Homomorphism/isomorphism type family. Use with TypeApplications, e.g. @as \@[Int] 4@ --> @[4]@, @as \@Char 65@ --> @'A'@
+-- For any two instances A and B
+-- @
+-- instance As B where type To B = A
+-- instance As A where type To A = B
+-- @
+-- should satisfy the identity (as \@B) . (as \@A) = (as \@A) . (as \@B) = id
+-- Which properties the homomorphism will preserve will depend on the objects you're working with, so the instances here are conservatively few.
+-- Note that this class is limited because GHC allows no overlap of type family instances. For example, I can't instance both a to [a] and [a] to a, since a is a type variable and can match a whole lot of instances (remember that GHC does not consider the context; it just matches the RHS of (=>) in a signature.)
+-- I'm not sure how useful this structure is, for either general or specific purposes.
+-- Perhaps using @Category@ is useful (instead)? Then homomorphisms would be composed applicatively. I have yet to dabble with Backpack <https://ghc.haskell.org/trac/ghc/wiki/Backpack>
+class As b where
+    type To b
+    as :: To b -> b
 
-instance Isomorphism T.Text String where
-    iso = T.unpack
-    dual = T.pack
+instance (Monad m, Eq e, Monoid e) => As (ExceptT e m a) where
+    type To (ExceptT e m a) = AccumT e m a
+    as = ExceptT . morphism239 (flip runAccumT mempty) (\(a, e) -> if e == mempty then pure a else (ExceptT . pure . Left) e) runExceptT
 
-instance Isomorphism BS.ByteString String where
-    iso = BS.unpack
-    dual = BS.pack
+instance (Monoid e, Monad m) => As (AccumT e m (Maybe a)) where
+    type To (AccumT e m (Maybe a)) = ExceptT e m a
+    as = (\case Left e -> add e >> return Nothing; Right x -> return $ Just x) <=< lift . runExceptT
 
-instance Isomorphism T'.Text String where
-    iso = T'.unpack
-    dual = T'.pack
-
-instance Isomorphism BS'.ByteString String where
-    iso = BS'.unpack
-    dual = BS'.pack
-
-{- taggy isomorphism; to be replaced by html-conduit
-instance Isomorphism Node (Tree Node) where
-    iso = unfoldTree (id &&& nodeChildren)
-    dual = rootLabel
--}
-
-instance Isomorphism (ExceptT e m a) (m (Either e a)) where
-    iso = runExceptT
-    dual = ExceptT
-
-instance ArrowCurry arr => Isomorphism (arr a (arr b c)) (arr (a, b) c) where
-    iso = uncurry
-    dual = curry
-
-instance Isomorphism Char Word8 where
-    iso = fromIntegral . ord
-    dual = chr . fromIntegral
-
--- With Backpack <https://ghc.haskell.org/trac/ghc/wiki/Backpack> coming into use,...I'm a bit unsure of how to use polymorphic strings and lists....
--- Fortunately I don't yet have a use for this isomorphism, so I can defer worries to the future.
 -- Rather than Monoid, I could have used Default, Alternative, MonadPlus,...I mean jeez how many null-supporting ADTs are there? I have to choose the single most ubiquitous one, or declare a buzzillion instances
 -- #whydoesnthaskellusestructuraltyping
 -- I suppose it's nice that this operation preserves fold
 -- TODO: this should make able to transform a list of URLs into a tree of them?
-instance Monoid m => Isomorphism [m] (Tree m) where
-    iso = Node mempty . fmap (flip Node [])
-    dual = fmap rootLabel . subForest
+instance Monoid m => As (Tree m) where
+    type To (Tree m) = [m]
+    as = Node mempty . fmap (flip Node [])
 
--- THIS INSTANCE PENDING DEPRECATION IN FAVOR OF ExceptT's Alternative instance:
---     (Monad m, Monoid e) => Alternative (ExceptT e m); (<|>) concats the monoid while failing. Thus use asum instead of mconcat, and (<|>) rather than (<>).
--- | created in conjunction with iso :: ExceptT e m a -> WriterT e m a: in an ExceptT, an error is fatal to that operation. However, if one runs many ExecptT's, some may succeed and others fail; thus, for this operation, the ExceptT's errors are no longer fatal!
--- So the idea here is converting a group of ExecptT's into a group of WriterT's, collecting results and errors.
--- Remember that if a is not a monoid, but you still want to return a and collect states/errors, just wrap a in Const (in Data.Monoid)
-instance (Monoid s, Monoid a, Monad m) => Semigroup (WriterT s m a) where
-    (<>) = cT WriterT (on (liftM2 (<>)) runWriterT)
+instance As [m] where
+    type To [m] = (Tree m)
+    as = fmap rootLabel . subForest
 
-instance (Monoid s, Monoid a, Monad m) => Monoid (WriterT s m a) where
-    mempty = return mempty
-    mappend = (<>)
-
--- | Control.Monad.Trans.Writer.tell, but monoid-compatible (rather than returning (), returns mempty; thus, dosen't affect value, but in different way)
-mtell :: (Monoid s, Monoid a, Monad m) => s -> WriterT s m a
-mtell = return mempty <=< tell
-
--- Given two isomorphic f, g :: MonadTrans (i.e. their ADT representations have the same number of variables,) ∃ isomorphism iso : f → g:
--- iso = lift . isoF . runMonadTrans where runMonadTrans represents e.g. runStateT, runWriterT and isoF is an isomorphism that maps a set of ADT variables to another (isoF is a total function)
--- I distinguish between isoF and iso because they aren't the same function in Haskell, though they're basically equal because lift and runMonadTrans are just automorphisms
--- we need Eq s to check if it equals mempty in the dual
-instance (Monoid s, Monoid a, Monad m, Eq s) => Isomorphism (ExceptT s m a) (WriterT s m a) where
-    iso = either mtell return <=< lift . runExceptT
-    dual = ExceptT . fmap (\(a, e) -> if e == mempty then Left e else Right a) . runWriterT
-
+-- | I haven't actually used this class for anything yet, but at some time I considered vaguely yet enthusiastically that one can do some impressive programming using arrows, currying, and categories. It may even be the case that @ArrowCurry@ doesn't add any functionality beyond Control.Arrow.
 class Arrow arr => ArrowCurry arr where
     curry :: (arr (a, b) c) -> arr a (arr b c)
     uncurry :: arr a (arr b c) -> (arr (a, b) c)
@@ -274,10 +230,13 @@ instance ArrowCurry (->) where
 -- Data.Function.on can be defined in terms of a unary function, a binary function, curry, and uncurry; this definition is similar to that of cT.
 -- If you have nothing better to do, playing code golf with on, cT, curry, uncurry, and arrows is pretty freaky and cool, especially when you assign binary operators to each of them and treat the duals curry and uncurry as adjoint functors
 -- Via currying, one can use cT to compose any n-ary and n+1-ary functions
--- Examples: notMember = cT not Set.member :: a -> Set a -> Bool
---           mappend = cT WriterT (on (liftM2 mappend) runWriterT) -- used in NStdLib's Monoid instance for WriterT s m a
---           also one can use the <% operator (looks like two circles being shrunk into one going to the left):
---           notMember = not <% Set.member
+-- Examples:
+-- @
+-- notMember = cT not Set.member :: a -> Set a -> Bool
+-- mappend = cT WriterT (on (liftM2 mappend) runWriterT) -- a Monoid instance for WriterT
+-- @
+-- also one can use the @<%@ operator (looks like two circles being shrunk into one going to the left):
+-- @notMember = not <% Set.member@
 cT :: (c -> d) -> (a -> b -> c) -> (a -> b -> d)
 cT u b = curry (u . uncurry b)
 
@@ -291,10 +250,15 @@ infixr 2 %>
 
 -- | Fold a bunch of binary functions. As an example, here's an Ord instance for @Network.Wai.Request@:
 -- @(==) = foldBins (&&) (==) True [requestMethod, rawPathInfo, rawQueryString] :: Request -> Request -> Bool@
+-- to demonstrate short-circuiting: @foldBins (||) (==) False [Left . fst, undefined] (4, undefined) (4, undefined)@ --> ⊥
+-- If any of the @undefined@'s are there, the whole computation bottoms-out.
 foldBins :: Foldable t => (c -> b1 -> c) -> (b2 -> b2 -> b1) -> c -> t (a -> b2) -> a -> a -> c
-foldBins f1 f2 x = curry . foldr (\f t -> liftA2 f1 t . uncurry . on f2 $ f) (pure x)
+foldBins f1 f2 x = curry . foldr (flip $ \t -> liftA2 f1 t . uncurry . on f2) (pure x)
 
 -- | Strict left fold version of @foldBins@. Note that, despite being a left fold, it has a function signature identical to foldBins.
+-- Does not short-circuit as easily as @foldBins@:
+-- @foldBins' (||) (==) False [Left . fst, undefined] (4, undefined) (4, undefined)@ --> True
+-- @foldBins' (||) (==) False [Left . fst, undefined] (4, undefined) (3, undefined)@ --> ⊥
 foldBins' :: Foldable t => (c -> b1 -> c) -> (b2 -> b2 -> b1) -> c -> t (a -> b2) -> a -> a -> c
 foldBins' f1 f2 x = curry . foldl' (\t -> liftA2 f1 t . uncurry . on f2) (pure x)
 

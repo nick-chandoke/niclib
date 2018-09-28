@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiWayIf, LambdaCase, FlexibleContexts, OverloadedStrings, TypeSynonymInstances, FlexibleInstances #-}
+{-# OPTIONS_GHC -Wno-type-defaults #-}
 module NicLib.Text
 ( abbreviate
 , thousandComma
@@ -6,30 +6,12 @@ module NicLib.Text
 , quote
 , indent
 , truncToNDigits
---, columnize
---, columnizeM
---, zipComplete
 ) where
 
--- import qualified Data.ByteString.Char8 as BS'
--- import qualified Data.ByteString.Lazy.Char8 as BS
--- import qualified Data.Text.Lazy as T
 import Data.Word
-import NicLib.NStdLib
 import qualified Data.ListLike as LL
 import qualified Data.ListLike.String as LLS
 import qualified Data.Text as T'
-
---import System.Console.Terminfo.Cursor
---import System.Console.Terminfo.Base
-{- try this after making both C8 and W8 BS' type family instances of ListLike
-class (IsString s, StringLike s, LL.ListLike s Char, Semigroup s) => Stringy s
-instance Stringy T.Text
-instance Stringy T'.Text
-instance Stringy BS'.ByteString
-instance Stringy BS.ByteString
-instance Stringy String
--}
 
 -- enclose in quotes
 quote :: (LL.ListLike str Char) => str -> str
@@ -54,7 +36,7 @@ indent i = LLS.unlines . map (LL.append (LL.replicate i strEmpty)) . LLS.lines
 -- This design would make a good ng-comp. web browser (that separates view from model.) The controller is, as always, photon REPL.
 
 -- | trims text to given length by removing characters from the middle; replaces removed text with an ellipsis (...)
--- this function uses Text.takeEnd (which is optimized; using (LL.reverse . take n . LL.reverse) would be much slower,) so it's defined only for Text's.
+-- this function uses Text.takeEnd (which is optimized; using (LL.reverse . take n . LL.reverse) would be much slower,) so it's defined only for Text's. It will be generalized to non-Texts when I push that commit of ListLike.
 abbreviate :: Int -> T'.Text -> T'.Text
 abbreviate n t =
     let tlen = LL.length t
@@ -79,46 +61,3 @@ removeComments t = case T'.uncons t of
 -- | truncate a RealFloat's decimal to a given number of digits
 truncToNDigits :: (Show a) => Int -> a -> String
 truncToNDigits n = (\(a,b) -> a <> take (n + 1) b) . break (=='.') . show
-
-{-
--- | columnize by pulling the COLUMNS environment variable, then calling columnize
-columnizeM :: (MonadIO m) => ExceptT String m a
-columnizeM = (\case Just cols -> printWithCols cols; _ -> normalPrintFunc) (setupTermFromEnv >>= flip getCapability termColumns) -- TODO: continue coding here
-
-columnize :: (LL.ListLike full1 (LL.ListLike full2 item)) => Int ->
-columnize numCols = 
-
--- functions related to columnizing output:
-zipComplete :: (LL.ListLike a_full a_item, LL.ListLike b_full b_item, LL.ListLike c_full (Maybe a_item, Maybe b_item)) => a_full -> b_full -> c_full
-zipComplete a b = case LL.uncons a of
-    Nothing -> case LL.uncons b of
-        Nothing -> LL.empty
-        Just (b:bs) -> LL.zip (LL.repeat Nothing) (LL.map Just bs)
-    Just (a:as) -> case LL.uncons b of
-        Nothing -> LL.zip (LL.map Just as) (LL.repeat Nothing)
-        Just (b:bs) -> zipComplete as bs `LL.append` LL.singleton (Just a, Just b)
-
-mlength :: (LL.ListLike full item) => Maybe full -> Int
-mlength = maybe 0 LL.length
-
-            let zippedOutput = zipComplete (S.toList leftOutput) (S.toList rightOutput) -- TODO: general columnize function should fold through a series of columns, computing the max length for each, breaking early if the sum of the max lengths is greater than COLUMNS,...and put a separator string in between
-            -- Data.Foldable.maximum :: (Foldable t, Ord a) => t a -> a
-                (longestLeft, longestTotal) = foldl' (\(ll, lt) (mlength -> l1, mlength -> l2) -> (max l1 ll, max (l1 + l2) lt)) (0,0) zippedOutput
-            in if longestTotal + 3 <= cols then -- +3 b/c " | " is separator string
-                mapM_ (\(ms1, ms2) -> putStrLn $ maybe (replicate longestLeft ' ') (\s1 -> s1 <> replicate (longestLeft - length s1) ' ') ms1 <> " | " <> fromMaybe mempty ms2) zippedOutput
-            else
-                printSequentially
--}
--- TODO: consider the following code, and how to write it in terms of NicLib.Parser, &cf.w/b':' &c in original URL parser. Consider too that fmap's are nested here, and it's not as elegant as nesting scrapers
-{-
-s0 <- S.fromList
-      . fmap (T'.unpack . T'.takeWhile (/=':'))
-      . filter ((<500)
-      . (read :: String -> Int)
-      . T'.unpack . (!!2)
-      . T'.split (==':'))
-      . T'.lines
-      <$> TIO.readFile "/etc/passwd" -- TODO: this map/filter should be one foldMap; make a function to make foldMap's of map/reduce pretty
-let s1 = s0 S.\\ S.singleton "root"
-    s2 = s1 S.\\ S.fromList ["sync", "shutdown", "halt", "root"]
--}

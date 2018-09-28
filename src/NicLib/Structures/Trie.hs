@@ -1,24 +1,9 @@
-{-# LANGUAGE
-  DefaultSignatures
-, DeriveGeneric
-, GeneralizedNewtypeDeriving
-, LambdaCase
-, MultiParamTypeClasses
-, MultiWayIf
-, NoOverloadedStrings
-, ScopedTypeVariables
-, ViewPatterns
-#-}
--- TODO: move foldr & foldl' to Foldable instance, write Functor, Applicative, and Traversable instances. Maybe even write a ListLike instance?
+-- TODO: make easy to specify which ListLike to use, with consideration that internal functions are stack-based. Is [] always best?
 -- TODO: tries are a {-# SPECIALIZATION #-} of trees. One should never have a tree of something when a trie is permittable. Make this selection automatic.
--- | Trie: an effecient set of sequences whose elements permit an order, e.g. strings ([Char] where ∃ compare :: Char -> Char -> Ordering) or delimited strings (e.g. '/'-delimited URL paths: string/string/string/... -> Trie string where each level represents a '/', e.g. level 1's "baz" and level 2's "foo" represents "baz/foo")
--- likely you'll want to import this module qualified
--- I don't implement common classes because Trie a should really be (Traversable t, Ord a) => Trie (t a), since Trie is defined only for traversables of ordered elements, but that'd require ExistentialTypes, which would be ugly, or dependent types (which obviously Haskell doesn't support)
--- so in practice, just convert between Trie a and Set a to get good foldability &c
--- ...come to think of it, a trie is just a space-efficient version of an unordered set of ordered sets. So I should be able to use this for storing application processes.
+-- | A space-effecient set of sequences whose elements permit an order; isomorphic with @Ord a => Set [a]@. Uses @Set@ and @ListLike@ under-the-hood.
+-- Likely you'll want to import this module qualified
 module NicLib.Structures.Trie
 ( Trie
-, OrderBy(..)
 , delete
 , empty
 , findMax
@@ -30,11 +15,13 @@ module NicLib.Structures.Trie
 , map
 , mapM_
 , member
+, lookup
 , notMember
 , null
 , singleton
 , size
 , toList
+, fromList
 , toSet
 , update
 {-
@@ -58,13 +45,12 @@ module NicLib.Structures.Trie
 ) where
 import Control.Arrow
 import Data.Binary
-import Data.Bool (bool)
 import Data.ListLike (ListLike)
 import Data.Maybe
 import Data.Ord
 import GHC.Generics (Generic)
-import Prelude hiding (zip, map, null, foldr, mapM_)
-import Data.List (uncons)
+import Prelude hiding (zip, map, null, foldr, mapM_, lookup)
+import qualified Prelude as Pl
 import qualified Data.ListLike as LL
 import qualified Data.Set as S
 import Data.Function ((&))
@@ -77,7 +63,7 @@ newtype Trie val tag = Trie {getTrie :: S.Set (Trie' val tag)} deriving (Generic
 instance (Binary a, Binary tag) => Binary (Trie a tag)
 
 -- | a Stop tells that the path from root to that stop is an item in the set, e.g. c -> a -> t -> {Stop (), a -> m -> a -> r -> a -> n -> Stop ()} <-> {("cat", ()), ("catamaran", ())}
--- children will never be S.null; the smallest a children can be is the set S.fromList [Stop smth]
+-- children will never be @S.null@; the smallest a children can be is the set @S.fromList [Stop _]@
 -- you may tag a Stop element with any data you wish; the Stop data is data that belongs with the element stored in the set, but only belongs to that whole element altogether, not having any meaning in the mere context of an element of the sequence stored as an element of the trie; for example, you may want to store a trie of (String, Int), where the Int is associated with a string, but not any character.
 -- remember that Stops have no effect on the Trie's organization; they're merely tagged-on for inserting and getting items. In other words, Stop values don't affect ordering of elements, trie membership, ...or anything other than "going-with" insert & singleton, and get functions (e.g. findMin, toSet)
 data Trie' val tag = Trie' {val :: val, children :: Trie val tag} | Stop tag deriving (Generic,Show)
@@ -86,9 +72,27 @@ instance (Show item, Eq item, Show tag) => Show (Trie item tag) where -- TODO: t
         go tab (getTrie -> trie) = flip foldMap trie $ \t -> (++)
             ({- take ((tab - 1) * 4 - 1) (foldMap (bool "─" "├" . ((== 0) . (`mod` tab))) [0..]) -} (replicate ((tab - 1) * 4 - 1) ' ') ++ ((if (case t of Stop _ -> S.size trie == 1; Trie' v _ -> v == val (S.findMax trie)) then '└' else '├'):"─"))
             (' ':(case t of Stop v -> "[TAG] " ++ show v ++ "\n"; Trie' v k -> show v ++ "\n" ++ go (succ tab) k))
-instance (Binary a, Binary tag) => Binary (Trie' a tag)
+instance (Binary a, Binary tag) => Binary (Trie' a tag) -- TODO: replace with or add store instance?
 
--- | helper method. returns (Stop, non-Stops); if no Stop, returns Nothing (in which case the right side of the partition pair is equal to the Trie passed to it)
+-- | Add elements from one trie into another. Elements present in both tries have @<>@ applied to their tags.
+instance (Ord a, Semigroup tag) => Semigroup (Trie a tag) where
+    a <> b = foldl' (flip update') a b where
+        -- update modified for (<>) rather than replacement
+        update' :: (Ord item) => ([item], tag) -> Trie item tag -> Trie item tag -- [] is acting as our ListLike here.
+        update' (ss, tag) = match ss >>> \(t,h) -> case LL.splitAt (length h) ss of
+            (p1, p2) ->
+                let
+                    x = Trie $ S.union (getTrie $ singleton (p2, y)) (getTrie t)
+                    -- (update' where y = tag) = update
+                    y = if LL.length ss == length h then fromMaybe tag $ (<> tag) . fst <$> factorStop t else tag -- this is a modified lookup function
+                in zip p1 x h
+
+instance (Monoid tag, Ord a) => Monoid (Trie a tag) where
+    mempty = empty
+    mappend = (<>)
+
+-- helper method. returns (Stop, non-Stops); if no Stop, returns Nothing (in which case the right side of the partition pair is equal to the Trie passed to it)
+-- inexhaustive pattern match against Stop only is OK
 factorStop :: Trie val tag -> Maybe (tag, Trie val tag)
 factorStop = (\(s,r) -> if S.null s then Nothing else Just (case S.elemAt 0 s of Stop sv -> sv, Trie r)) . S.partition (\case Stop _ -> True; _ -> False) . getTrie
 
@@ -119,16 +123,20 @@ delete ss tt =
         (factorStop -> t, h) = match ss tt
 
 member :: (ListLike full item, Ord item) => full -> Trie item tag -> Bool
-member ss = (\(t,h) -> hasStop t && LL.length ss == length h) . match ss
+member ss = match ss >>> \(t,h) -> hasStop t && LL.length ss == length h
 
 notMember :: (ListLike full item, Ord item) => full -> Trie item tag -> Bool
 notMember = cT not member
 
+-- | get an index's associated tag
+lookup :: (LL.ListLike full a, Ord a) => full -> Trie a tag -> Maybe tag
+lookup ss = match ss >>> \(t,h) -> if LL.length ss == length h then fst <$> factorStop t else Nothing
+
 -- | insert item into trie if item is not already there; if item is in trie already (independent of its tag value) then trie is unaltered. Use method update to update an already existant item's tag value 
 insert :: (ListLike full item, Ord item) => (full, tag) -> Trie item tag -> Trie item tag
 insert (ss, tag) t0 = case match ss t0 of 
-    (t,h) -> if hasStop t && LL.length ss == length h then t0 else
-        case LL.splitAt (length h) ss of (p1, p2) -> zip p1 (Trie $ S.union (getTrie $ singleton (p2, tag)) (getTrie t)) h
+    (t,h) -> let lh = length h in if hasStop t && LL.length ss == lh then t0 else
+        case LL.splitAt lh ss of (p1, p2) -> zip p1 (Trie $ S.union (getTrie $ singleton (p2, tag)) (getTrie t)) h
 
 -- | inserts item into trie. If item is already in trie, updates its tag value
 update :: (ListLike full item, Ord item) => (full, tag) -> Trie item tag -> Trie item tag
@@ -160,6 +168,7 @@ lookupLT :: Ord a => [a] -> Trie a -> Maybe a
 split :: Ord a => Trie a -> Trie a -> (Trie a, Trie a)
 -}
 
+-- | Can't instance @Foldable@ because folds over @(a, tag)@ rather than @a@.
 foldr :: (ListLike full a, Ord a) => ((full, tag) -> b -> b) -> b -> Trie a tag -> b
 foldr f = go LL.empty where -- traverse down trie, building accumulator until a Stop is hit, then apply function to that branch. Base case for go is t = fromList [Stop], in which case go returns lump: (\x -> S.foldr undefined x S.empty) = id
     go acc lump t = case (\(Trie' v c) b -> go (LL.snoc acc v) b c) of
@@ -173,6 +182,15 @@ foldl' f = go LL.empty where -- traverse down trie, building accumulator until a
         ff -> case factorStop t of
            Nothing -> S.foldl' ff lump (getTrie t)
            Just (stopVal, nonStops) -> S.foldl' ff (f lump (acc, stopVal)) (getTrie nonStops)
+
+{- TODO. Except wait the function I'd meant to write was unfoldTrieM
+foldM :: (ListLike full a, Ord a) => (b -> (full, tag) -> m b) -> b -> Trie a tag -> m b
+foldM f = go LL.empty where -- modified from foldl'
+    go acc lump t = case (\b (Trie' v c) -> go (LL.snoc acc v) b c) of
+        ff -> case factorStop t of
+           Nothing -> S.foldl' ff lump (getTrie t)
+           Just (stopVal, nonStops) -> S.foldl' ff (f lump (acc, stopVal)) (getTrie nonStops)
+-}
 
 -- | apply a function to each element of a trie, in order of its elements (e.g. mapM_ print {("ao",()), ("hello",()), ("hi",())} will print ao, then hello, then hi)
 mapM_ :: (ListLike full item, Ord item, Monad m) => ((full, tag) -> m ()) -> Trie item tag -> m ()
@@ -209,6 +227,9 @@ toSet = foldr (S.insert . OrderBy) S.empty
 toList :: (ListLike full a, Ord a, Ord full, Ord tag) => Trie a tag -> [(full, tag)]
 toList = foldr (:) []
 
+fromList :: (ListLike full a, Ord a, Ord full, Ord tag, Foldable t) => t (full, tag) -> Trie a tag
+fromList = Pl.foldr update empty
+
 instance Eq a => Eq (Trie' a tag) where
     Trie' a s == Trie' b t = a == b && s == t
     Stop _ == Stop _ = True
@@ -225,10 +246,11 @@ instance Ord a => Ord (Trie' a tag) where
 -- Match & Zip: Effectively Duals
 -- (\s t -> (\(x,y) -> zip s x y) (match s t)) z a == a, where z is any string and a is any Trie
 
+-- TODO: match is (at least one of) the most expensive and elementary functions in Trie. Many methods depend on its output ((t,h) -> ...); make this combinatory.
 -- | helper function. Searches through a trie for branch matching longest substring of given sequence. Returns (matched trie t, stack of tries ancestors of t \ t)
-match :: (ListLike full item, Ord item) => full -> Trie item tag -> (Trie item tag, [Trie item tag])
+match :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> (t, [t])
 match ss t = go ss t [] where
-    go :: (ListLike full item, Ord item) => full -> Trie item tag -> [Trie item tag] -> (Trie item tag, [Trie item tag])
+    go :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> [t] -> (t, [t])
     go s t'@(getTrie -> t) h =
         do
             (c,cs) <- LL.uncons s
@@ -240,5 +262,5 @@ match ss t = go ss t [] where
 
 -- | inserts a sub-Trie' into a larger Trie, using a stack whose head is childmost Trie
 -- first parameter gives the values of Trie's for childless nodes in the history stack
-zip :: (ListLike full item, Ord item) => full -> Trie item tag -> [Trie item tag] -> Trie item tag
+zip :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> [t] -> t
 zip (LL.reverse -> s) = cT (fst . flip (LL.foldl' (\i@(t, (h:hs)) c -> (Trie $ S.insert (Trie' c t) (getTrie h), hs))) s) (,) -- s is guaranteed to be at least as long as h, but in practice should always be the same length. Thus zip should throw any index out of bounds error, as it indicates a logic error in whatever method uses zip

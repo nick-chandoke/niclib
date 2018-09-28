@@ -1,4 +1,3 @@
-{-# LANGUAGE MultiParamTypeClasses, FlexibleContexts #-}
 -- 3 stages of data that is yet-to-be-parsed:
 --   1. raw data without schema (we need to determine its schema)
 --   2. structured data that has a structure different from what we want (isomorphic) (e.g. scraped website; we preserve some structure of the scraped site, though we'll filter & map it into a different structure)
@@ -42,11 +41,11 @@ import qualified Data.ListLike as LL
 -- It's expected that you'll create a simple sum type for your states, e.g. data States = State1 | State2 | ... deriving Eq. (probably usually deriving Enum and/or Bounded, though this doesn't affect the parse function)
 -- The first argument (the "parser") is a collection of (state, successor function). A successor function takes the currently-parsed value and yet-to-parse value and produces a list of possible future states (currentParsedValue, inputToPassToNextState, Maybe nextState). I suppose that in most parsers, all successor functions will return LL.singleton's.
 parse :: (Eq s, Foldable t, LL.ListLike full (output, input, Maybe s), LL.ListLike full' output)
-      => t (s, output -> input -> full)
-      -> s -- initial state
-      -> output -- initial output value
-      -> input -- input
-      -> full' -- some ListLike full of outputs
+      => t (s, output -> input -> full) -- ^ set of states and their associated functions that "step forward"
+      -> s -- ^ initial state
+      -> output -- ^ initial output value
+      -> input -- ^ input
+      -> full' -- ^ some ListLike full of outputs
 parse parser s a b = case find ((==s) . fst) parser of -- if we have very many states, we may impose an order on them and binary search through the list of states as a Set of states just for faster lookup. That's a very small quick change.
     Nothing -> error "Unaccounted-for state."
     Just (_, succFunc) -> flip LL.concatMap (succFunc a b) $ \(a', b', ms') -> case ms' of Nothing -> LL.singleton a'; Just s' -> parse parser s' a' b'
