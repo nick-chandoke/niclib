@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -funbox-strict-fields -O2 -optc-O2 #-}
--- | push elements in a fixed-size buffer; if buffer is full at time of element insertion, oldest element is pushed out from the buffer
+-- | push elements in a fixed-size buffer; if buffer is full at time of element insertion, oldest element is pushed out from the buffer. I'd think there's a name for such a structure, and that someone else would have already implemented it. If you know about such things, please message me about it.
 -- intended to be imported qualified
 -- undefined behavior for Buffers of size greater than (maxBound :: Int)
 -- works via unboxed vectors; Buffers aren't defined for general objects. See <https://hackage.haskell.org/package/vector-0.12.0.1/docs/Data-Vector-Unboxed.html> for the defined type family instances
@@ -20,7 +20,7 @@ import Data.Vector.Unboxed (Unbox)
 data Buffer a = Buffer
     !Int -- index
     !Int -- size
-    (V.Vector a) -- data
+    !(V.Vector a) -- data
     deriving (Eq, Ord, Functor)
 instance (Show a, Unbox a) => Show (Buffer a) where show = show . get
 
@@ -36,5 +36,5 @@ get (Buffer i s b) =
 
 -- I'm uncomfortable that I'm returning a new buffer rather than the same buffer in the ST monad
 -- see <http://hackage.haskell.org/package/array-0.5.1.1/docs/Data-Array-IO.html>
-push :: Unbox a => Buffer a -> a -> Buffer a
-push (Buffer i s b) e = Buffer (i + 1) s (V.update b (V.singleton (i `mod` s, e))) -- I'm not clear on how to use V.modify, so I'm using V.update....
+push :: Unbox a => a -> Buffer a -> Buffer a
+push e (Buffer i s b) = Buffer (i + 1) s (V.update b (V.singleton (i `mod` s, e))) -- I'm not clear on how to use V.modify, so I'm using V.update....

@@ -1,31 +1,31 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE OverloadedStrings #-}
 
+-- TODO: rewrite in terms of Capabilities <https://github.com/tweag/capability> (will push niclib to requiring GHC 8.6, however)
+--   or use exceptions instead of error-logging monads. I'll have to consider the roles/uses of this module in order to decide such things.
 -- AccumT's are used mostly as WriterT's herein; you'll see a lot of things in the vein of runAccumT (add ... >> ...) mempty
 -- | Handle logging, filtering for, and printing, errors
--- There are two ways I can see using warnings and errors: (1) always use BugT, thus allowing for a combination of either at any time; (2) be polymorphic in the return type of many functions (ExceptT, AccumT, WriterT, or StateT)
--- I'm unsure how much faster programs using just one-layer-deep transformers are than those that use BugT (which has two layers of transformers.)
--- btw, I may use the term "bug-out" to refer to a BugT returning a Left-like value
+-- Please note that, especially for multi-threaded programs, you should *not* use error-logging monads to catch exceptions! If you aren't familiar with this, you can easily find material about it online. This being said, I've found use for BugT in server request routing, to handle non-erroroneous exceptional behaviors. (read https://wiki.haskell.org/Error_vs._Exception if that's confusing.) Keep in mind that "errors" are still useful in pure code, and that "error" monads are better called "exit-early" or "short-circuit" monads, since that's their literal behavior, regardless of the purpose!
 module NicLib.Errors
 ( BugT
 , bugT
-, runBugT
-, warn
-, err
-, orLog
-, orError
-, with -- for some reason I get a parse error when I tried naming it 'by'
-, withBugAccum
-, mapBugAccum
-, toError
-, toWarning
 , dumpWarn
+, err
 , getWarning
+, liftME
+, mapBugAccum
+, mtell
+, orError
+, orLog
+, orThrow
+, runBugT
 , stderrOnFail
 , stderrOnFailAndExit
+, toError
 , toStderr
-, liftME
-, mtell
+, toWarning
+, warn
+, with -- for some reason I get a parse error when I tried naming it 'by'
+, withBugAccum
 ) where
 
 import Control.Monad.Catch
@@ -35,11 +35,13 @@ import Control.Monad.Trans.Except
 import Control.Monad.Trans.Writer
 import Data.ListLike (StringLike)
 import Data.ListLike.String hiding (fromString)
-import Data.Text (Text)
+import Data.Text (Text) -- text
+import qualified Data.Text as T' -- text
 import NicLib.NStdLib
 import System.Exit
 import System.IO (stderr, hPutStrLn)
 import System.IO.Error
+import Control.Exception.Safe (throwString) -- safe-exceptions
 
 -- | Applies @<>@ to monoidal writer values and accumulations:
 -- @runWriter $ mtell "hello!" <> return (Sum 4) <> return (Sum 20) <> mtell " hoho"@ --> (Sum {getSum = 24},"hello! hoho")
@@ -121,7 +123,12 @@ action `orLog` msg = \l -> catch action $ \e ->
 
 -- | @orError = orLog with err@
 orError :: (MonadCatch m) => ExceptT Text m a -> Text -> ExceptT Text m a
-orError = orLog %> ($err) -- somewhy orLog %> with err doesn't work?
+orError = orLog %> ($err)
+
+-- | calls @Control.Exception.Safe.throwString@ on an error
+-- e.g. @mzero `orThrow` "mzero error"@
+orThrow :: MonadCatch m => m a -> Text -> m a
+orThrow = orLog %> flip with (throwString . T'.unpack)
 
 -- | @with = $@.
 with :: (a -> b) -> a -> b

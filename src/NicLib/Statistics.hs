@@ -30,13 +30,13 @@ randDist i = liftIO . replicateM' i . fmap S.singleton . flip runRVar DevURandom
 -- TODO: scale width of histogram output to number of columns
 -- TODO: change floor to round to n digits
 showHist :: (Foldable t, RealFrac n, Show n) => t ((n, n), Int) -> T.Text
-showHist xs = case getMax $ foldMap (Max . length . printRange . both floor . fst) xs of -- actually, the last element should be the longest, assuming all elements have the same number of decimal digits
+showHist xs = case getMax' $ foldMap (Max' . length . printRange . both floor . fst) xs of -- actually, the last element should be the longest, assuming all elements have the same number of decimal digits
     (fromIntegral -> maxInXS) -> T.unlines $ foldMap (\((T.pack &&& fromIntegral . length) . printRange . both floor -> (t, l), fromIntegral -> numInBin) -> [t <> (T.take (maxInXS - l) (T.repeat ' ')) <> T.cons ' ' (T.take numInBin (T.repeat '◼'))]) xs
     where
         printRange (a, b) = show a ++ '~':(show b)
 
 showHist' :: (Foldable t, Show a) => t (a, Int) -> T.Text
-showHist' xs = case getMax $ foldMap (Max . length . show . fst) xs of -- actually, the last element should be the longest, assuming all elements have the same number of decimal digits
+showHist' xs = case getMax' $ foldMap (Max' . length . show . fst) xs of -- actually, the last element should be the longest, assuming all elements have the same number of decimal digits
     (fromIntegral -> maxInXS) -> T.unlines $ foldMap (\((T.pack &&& fromIntegral . length) . show -> (t, l), fromIntegral -> numInBin) -> [t <> (T.take (maxInXS - l) (T.repeat ' ')) <> T.cons ' ' (T.take numInBin (T.repeat '◼'))]) xs
 
 -- number of bins is determined by variance of distribution if Nothing is passed; else one may manually specify the number of bins

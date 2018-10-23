@@ -13,12 +13,13 @@ name: NicLib
 stability: Stable
 synopsis: Hodgepodge of functionality. The personal library of Nic Chandoke. Hopefully useful to others, too.
 tested-with: GHC ==8.4.2
-version: 0.1.2
+version: 0.1.4
 
 library
-  ghc-options: -O2 -Wno-type-defaults
+  ghc-options: -Wno-type-defaults
   hs-source-dirs: src
   exposed-modules:
+      Control.Monad.Trans.Lookup
       NicLib.Aeson
       NicLib.Errors
       NicLib.FileSystem
@@ -53,6 +54,7 @@ library
       random-fu,
       random-source,
       req,
+      safe-exceptions,
       transformers>=0.5.5.0,
       text,
       time,
@@ -62,7 +64,6 @@ library
       vector
   default-extensions:
       ApplicativeDo,
-      CPP,
       DataKinds,
       DefaultSignatures,
       DeriveDataTypeable,

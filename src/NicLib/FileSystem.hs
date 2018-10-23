@@ -1,14 +1,13 @@
--- | a module that replaces System.Directory functions with UNIX fileutil names (e.g. cp, mv) and wraps everything in ExceptT for automatic error handling
+-- | Some helpful convenience functions. Note that much of this library has been obsoleted by conduit and safe-exceptions.
+-- Concerning exceptions, this lib used to have everything wrapped in @AccumT@ or @ExceptT@. No longer! After all, exception handling is nuanced and specialized to the particular needs of the program being run. As of NicLib v0.1.3 it's now up to the user to handle (usually accumulating or short-circuiting on) exceptions. Use NicLib.Errors or @Control.Exception.Safe@ for this ;)
+-- Functions like @ls@ and @mkdir@ that may throw predictable exceptions (e.g. directory does not exist, permissions errors) do not have any exception handling done. However, functions that use such functions will account for their exceptions and concatenate them together (e.g. dirdiff will catch all file-not-found, can't-enter-directory, etc. exceptions, logging them in a @StringException@.) I do this because it's expected that any function f that concerns filesystem objects not passed to f as a parameter will probably throw some kind of exception, and we don't want to short-circuit the computation for something so commonplace.
 module NicLib.FileSystem
 ( FilePath(..)
-, subDirsT
-, subDirsIO
 , mkdir
 , mkcd
 , ln
 , cd
 , ls
-, lsRel
 , mv
 , cp
 , cpWithMetadata
@@ -20,18 +19,18 @@ module NicLib.FileSystem
 , dirname
 , basename
 , noPathEnd
-, dirdiff
+{- , dirdiff
+, dirsame -}
 , fileEq
 , realPath
 ) where
 
--- import NicLib.Structures.Trie (Trie)
--- import qualified NicLib.Structures.Trie as Trie
 import Control.Monad.Catch
-import Control.Monad.IO.Class
-import Control.Monad.Trans.Accum
-import Control.Monad.Trans.Class
+import Control.Monad.Trans.Reader
+import Data.IORef
+import Data.Sequence ((|>))
 import Control.Monad.Trans.Except
+import Control.Monad.IO.Class
 import Data.Foldable
 import Data.ListLike (ListLike)
 import Data.String (IsString(..))
@@ -66,49 +65,12 @@ instance Monoid FilePath where
               d = (pathSeparator ==) . head
 instance Semigroup FilePath where (<>) = mappend -- GHC < 8.4.1 compat
 
--- TODO: use conduit's Data.Conduit.Combinators.sourceDirectory(Deep) <https://www.stackage.org/haddock/lts-12.9/conduit-1.3.0.3/Data-Conduit-Combinators.html#v:sourceDirectory>
 -- | prettier alias
 ls :: MonadIO m => String -> m [String]
 ls = liftIO . D.listDirectory
 
--- | Suppose System.Directory.listDirectory "dir" returns ["a.file", "b.ext"]; then
--- lsRel "dir" returns ["dir/a.file", "dir/b.ext"] (or with backslashes for Windows)
-lsRel :: (MonadIO m, MonadCatch m) => String -> ExceptT Text m [String]
-lsRel fp@(FilePath -> fp') = do
-    whenM (liftIO $ not <$> D.doesDirectoryExist fp) checkDir
-    fmap (unwrapFilePath . ((fp' <>) . FilePath)) <$> ls fp `orError` (T'.pack $ "can't list contents of directory " <> fp)
-    where
-        checkDir = err . T'.pack =<< (bool ("The directory " <> fp <> " does not exist!") (fp <> " exists, but is not a directory!") <$> liftIO (D.doesPathExist fp))
-
--- | @lsRel@ modified to suit @AccumT@. More than a mere transformation, the logic is slightly different, as it's expecting to handle both directories and other filesystem objects (assumedly just files for now.)
-lsRel' :: (MonadIO m, MonadCatch m, LL.ListLike full Text, Monoid full) => String -> AccumT full m [String]
-lsRel' fp@(FilePath -> fp') = fmap (fromMaybe (pure [])) . as . withExceptT LL.singleton $ do -- @as@ will convert to a Maybe a, since that's the general case. Here we will exploit that Nothing ~ []
-    eDir <- liftIO $ D.doesDirectoryExist fp
-    eAny <- liftIO $ D.doesPathExist fp
-    if | eDir -> fmap (unwrapFilePath . ((fp' <>) . FilePath)) <$> ls fp `orError` (T'.pack $ "can't list contents of directory " <> fp)
-       | eAny -> return mempty
-       | otherwise -> err . T'.pack $ "No filesystem object named " <> fp <> " exists!"
-
--- | Get file tree recursively, with map/reduce. The filter and map are applied to the absolute path, for each file.
--- Filter is Kleisli in order to work with @doesFileExist@ &c
--- it's advisable to only ever give absolute paths as arguments to this function!
--- it's recommended to not try to use @subDirsT@ as a substitute to find(1); the fact that @subDirsT@ returns a tree rather than a list gives it some power and limitations that make it behave simply differently from a map/reduce traversal over a filesystem that returns a list of filepaths.
-subDirsT :: (MonadIO m, MonadCatch m, LL.ListLike full Text, Monoid full) => (String -> m Bool) -> (String -> a) -> String -> AccumT full m (Tree a) -- TODO: replace with Trie, after writing unfoldTrieM
-subDirsT p m = unfoldTreeM $ \fp -> (m fp,) <$> bool' (pure []) (filterM (lift . p) =<< lsRel' fp) (liftIO $ D.doesDirectoryExist fp)
-
--- | Map an IO action breadth-first recursively over a file tree. The filter and map are applied to the path relative to the given file. Use subDirsIO (const (return True)) putStrLn to see this. 
--- Basically, subDirsIO p m fp = lsdir fp >>= filterM p >>= mapM_ m >> lsdir fp >>= mapM_ (subDirsIO p m)
--- Some filters you may want: doesFileExist, doesDirectoryExist, doesPathExist; otherwise, if you want seperate actions depending on type of filesystem object, use a MultiWayIf in the mapping, and use (const True) as your filter
--- Some mappings you may want: (putStrLn . unwrapFilePath)
--- Only works on directories. If you provide a path to a file object, even if the file satisfies the filter, it will not be mapped-over. Just do that yourself. This function is strictly for recursively acting over a directory. This function still maps actions over subfiles, however.
--- Remember to wrap in FilePath for mappend/<>, if filtering for equality of directory paths
-subDirsIO :: (MonadIO m, MonadCatch m, LL.ListLike full Text, Monoid full) => (String -> m Bool) -> (String -> m ()) -> String -> AccumT full m ()
-subDirsIO p m fp = whenM (liftIO $ D.doesDirectoryExist fp) $ do
-    lsRel' fp >>= filterM (lift . p) >>= mapM_ (lift . m)
-    lsRel' fp >>= mapM_ (subDirsIO p m) -- yes, we call lsRel twice here; it may return a different value the second time it's called, since the prior one may have changed the directory!
-
 -- | each creates parent directories as necessary
-mv, cp, cpWithMetadata, cpPermissions :: (MonadIO m, MonadCatch m) => String -> String -> ExceptT Text m ()
+mv, cp, cpWithMetadata, cpPermissions :: (MonadIO m, MonadCatch m) => String -> String -> m ()
 mv = withNewDir (cT liftIO D.renameFile)
 cp = withNewDir (cT liftIO D.copyFile)
 cpWithMetadata = withNewDir (cT liftIO D.copyFileWithMetadata)
@@ -116,13 +78,19 @@ cpPermissions = withNewDir (cT liftIO D.copyPermissions)
 
 -- | creates a destination directory if it doesn't already exist, then performs an action
 -- helper (non-exported) method for mv, cp, &c
-withNewDir :: (MonadCatch m, MonadIO m) => (a -> String -> ExceptT Text m b) -> a -> String -> ExceptT Text m b
+withNewDir :: (MonadCatch m, MonadIO m) => (a -> String -> m b) -> a -> String -> m b
 withNewDir f a b@(dirname -> b') = (null b' ? return () ↔ mkdir b') >> f a b
 
+-- | @mvt destDir files@ in Haskell, equals, in bash, @mv -t destDir ${files[@]}@
+mvt :: MonadIO m => String -> [String] -> m ()
+mvt destDir@(FilePath -> dd) files = liftIO $ do
+    guard =<< D.doesPathExist destDir
+    mapM_ (\f -> D.renameFile f (unwrapFilePath $ dd <> FilePath (basename f))) files
+
 -- | used to store files with duplicate names; transforms file.ext into file-1.ext; transforms file-1.ext into file-2.ext, &c
--- transforms file into file-1, if no extension
+-- for filepaths without extensions: transforms "file" into "file-1", and "file-1" into "file-2"
 nextDuplicateFileName :: String -> String
-nextDuplicateFileName [] = []
+nextDuplicateFileName [] = mempty
 nextDuplicateFileName a = case breakAtLast '.' a of
     Nothing -> f a
     Just (b, ext) -> f (init b) ++ '.':ext
@@ -130,31 +98,30 @@ nextDuplicateFileName a = case breakAtLast '.' a of
         f c = case breakAtLast '-' c of
             Nothing -> c ++ "-1"
             Just (_, "") -> c ++ "1"
-            Just (d, x) -> case (readMaybe :: String -> Maybe Int) x of
+            Just (d, x) -> case readMaybe x :: Maybe Int of
                 Nothing -> d
-                Just n -> d ++ (show $ succ n)
+                Just n -> d ++ show (succ n)
 
 -- | checks whether object at path exists, and if not, returns original name; if so, returns nextDuplicateFileName name
 -- works for relative and absolute pathnames, as per System.Directory.doesPathExist
 pathOrNextDuplicate :: String -> IO String
-pathOrNextDuplicate p = bool' (return p) (return $ nextDuplicateFileName p) (D.doesPathExist p)
+pathOrNextDuplicate p = bool p (nextDuplicateFileName p) <$> D.doesPathExist p
 
 -- | get file extension. returns empty string if no extension. extension includes leading dot
 fileExtension :: String -> String
 fileExtension s = if '.' `elem` s then ('.':) . reverse . takeWhile (/='.') $ reverse s else empty
 
--- | create a directory. Convenience method: catches IOError's
-mkdir :: (MonadIO m, MonadCatch m) => String -> ExceptT Text m ()
-mkdir dir = (liftIO $ D.createDirectoryIfMissing True dir) `orError` "couldn't create directory"
+mkdir :: (MonadIO m, MonadCatch m) => String -> m ()
+mkdir dir = (liftIO $ D.createDirectoryIfMissing True dir) `orThrow` "couldn't create directory"
 
 -- equivalent to bash "mkdir -p dir && cd dir"
-mkcd :: (MonadIO m, MonadCatch m) => String -> ExceptT Text m ()
+mkcd :: (MonadIO m, MonadCatch m) => String -> m ()
 mkcd = mkdir &&& cd >*> (>>)
 
 -- | Create a symbolic link. (POSIX ONLY!)
 -- same order as cp: ln src (Just dest) will create a link called dest that points to src.
 -- ln src Nothing will create a link with the basename of src in the working directory
-ln :: (MonadIO m, MonadCatch m) => String -> Maybe String -> ExceptT Text m ()
+ln :: (MonadIO m, MonadCatch m) => String -> Maybe String -> m ()
 ln src = withNewDir (cT liftIO createSymbolicLink) src . \case
     Nothing -> "./" ++ basename src -- (1) TODO: make work for non-POSIX pathnames
     Just d -> isJust (breakAtLast pathSeparator d) ? d ↔ "./" ++ d -- (1) here too
@@ -185,42 +152,37 @@ noPathEnd :: ListLike s Char => s -> s
 noPathEnd s | LL.null s = LL.empty
             | otherwise = LL.last s == pathSeparator ? LL.init s ↔ s
 
--- | compare two directories recursively, for structure and file content; one can safely say that if dirdiff returns mempty on directories containing ONLY FILES AND DIRECTORIES (no symlinks or special filesystem objects!), then these two directories are exactly identical.
+{- | compare two directories recursively, for structure and file content; one can safely say that if dirdiff returns mempty on directories containing ONLY FILES AND DIRECTORIES (symlinks and special filesystem objects are not considered!), then these two directories are exactly identical.
 -- perhaps I'll add support for comparing other filesystem objects later
 -- returns (files present in a but not b, files present in b but not a, files present in both but with different file contents)
--- the AccumT variable is a concatenation of any error messages from trying read both directories
-dirdiff :: (ListLike full Text) => String -> String -> AccumT full IO (S.Set String, S.Set String, S.Set String)
-dirdiff a b = do
-    (d1, fs1, e1) <- f a
-    (d2, fs2, e2) <- f b
-    add (e1 <> e2)
-    let leftOutput  = fs1 S.\\ fs2
-        rightOutput = fs2 S.\\ fs1
-    overlap <- flip foldMapM (fs1 `S.intersection` fs2) $ \o ->
-        let p1 = unwrapFilePath $ FilePath d1 <> FilePath o
-            p2 = unwrapFilePath $ FilePath d2 <> FilePath o
-        in do -- for some reason bool' ⋯ (liftIO $ D.doesFileExist p1 <&&> D.doesFileExist p2) didn't work, but if-then-else does :/
-            bothFilesExist <- liftIO $ D.doesFileExist p1 <&&> D.doesFileExist p2
-            fmap (fromMaybe mempty) . as . withExceptT LL.singleton $
-                if bothFilesExist then
-                    bool mempty (S.singleton o) <$> fileEq p1 p2
-                else
-                    return mempty
-    return (leftOutput, rightOutput, overlap)
+-- @dirsame@ is @dirdiff@'s complement
+-- also note that @dirdiff@ will crash if either of its arguments are null
+dirdiff :: String -> String -> ReaderT (IORef (Seq Text)) _ (Trie Char (), Trie Char (), Trie Char ())
+dirdiff (forceTrailingSep -> a) (forceTrailingSep -> b) = do
+    ref <- ask
+    let pushToLog :: MonadResource m => IOError -> ConduitT i o m ()
+        pushToLog e = liftIO $ modifyIORef' ref (|> (T'.pack $ show e)) -- atomicity isn't important here
+    handleC pushToLog $ do
+        sourceDirectoryDeep False a .| (\x -> whenM doesFileExist (rel a b x))
+        sourceDirectoryDeep False b
+    -- read from a's directory stream; it'll basically be a condiut version of the set-diff-fold, except that rather than give b as a starting value and checking if x ∈ b, just don't have b at all, and check whether a file exists at x relative to b.
+diff a b = S.foldr (\x (ja, jb, ovrlp) -> if x `S.member` b then (ja, S.delete x jb, S.insert x ovrlp) else (S.insert x ja, jb, ovrlp)) (S.empty, b, S.empty) a
     where
-        -- files with prefixes removed; suitable for set subtraction
-        f d =
-            let dir = noPathEnd d
-                prefixLen = length dir + 1 -- length to strip off: length of dirname plus 1 for pathSeparator; we do this because subDirsS always returns paths prefixed with pathSeparator
-            in liftIO $ do
-                (dirContents, errs) <- runAccumT (subDirsT (const (return True)) (drop prefixLen) dir) mempty
-                return (dir, foldr S.insert S.empty dirContents, errs)
+        forceTrailingSep x = if last x == pathSeparator then x else x ++ [pathSeparator]
+        -- example: rel "/home/nic/Downloads/" "/mnt/backup/nic/Downloads/" "/home/nic/Downloads/tomato.png" --> "/mnt/backup/nic/Downloads/tomato.png"
+        rel:: String -> String
+        rel x y fp = y ++ drop (length x) fp
+
+-- | The complement to @dirdiff@: returns a set (as a @Trie@) of. Not yet implemented.
+dirsame :: String -> String -> Trie Char ()
+dirsame = undefined
+-}
 
 -- | test whether files' contents are equal (opens files in binary mode)
 -- please note that fileEq does not dereference links; supposing link1 -> file1, fileEq link1 file1 --> False
 -- however, System.Posix.readSymbolicLink link1 == file1, implying too that (fileEq file1 =<< readSymbolicLink link1) --> True
-fileEq :: (MonadIO m, MonadCatch m) => String -> String -> ExceptT Text m Bool
-fileEq a b = flip orError ("Failed to compare contents of files " `LL.append` quote (T'.pack a) `LL.append` " and " `LL.append` quote (T'.pack b)) . liftIO $ do
+fileEq :: String -> String -> IO Bool
+fileEq a b = do
     h1 <- openBinaryFile a ReadMode
     h2 <- openBinaryFile b ReadMode
     e <- liftA2 (/=) (hGetContents h1) (hGetContents h2)

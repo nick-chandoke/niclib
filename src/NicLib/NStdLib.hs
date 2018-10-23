@@ -1,10 +1,11 @@
--- | Miscellaneous data structures and functions that make everyday coding easier. My own Prelude, plus my own functionality.
+-- | Personal Prelude
 module NicLib.NStdLib
-( module Data.Semigroup
+( (<>)
 , module Control.Arrow
 , module Control.Monad
 , module Control.Applicative
 , module Data.Traversable
+, module Data.Foldable
 , module Data.Maybe
 , module Data.Bool
 , module Data.Functor.Identity
@@ -25,7 +26,6 @@ module NicLib.NStdLib
 , bool'
 , both
 , cT
-, ffilter
 , findM
 , foldBins
 , foldBins'
@@ -57,6 +57,7 @@ import Data.Bifunctor as BiF
 import Data.Bool
 import Data.Char
 import Data.Function ((&), on, fix) -- importing everything messes with the ArrowCurry definition
+import Data.Foldable
 import Data.Functor.Identity
 import Data.List
 import Data.Maybe
@@ -125,10 +126,6 @@ infixl 4 <&>
 (<&>) :: Functor f => f a -> (a -> b) -> f b
 (<&>) = flip fmap
 
--- | filter but with codomain generalized to ListLike's
-ffilter :: (LL.ListLike list item, Foldable t) => (item -> Bool) -> t item -> list
-ffilter p = foldr (\a b -> if p a then LL.cons a b else b) LL.empty
-
 -- | f &&& g >*> h is shorthand for (f &&& g) >>> uncurry h
 infixr 2 >*>
 (>*>) :: ArrowCurry cat => cat a1 (a2, b) -> cat a2 (cat b c) -> cat a1 c
@@ -165,6 +162,8 @@ xs !!? n
 -- @
 -- suggesting that they share the common monad @m@. However, this is incorrect; in "s m x," s ~ ExceptT e, m ~ AccumT w m2, and x ~ x. The "nice" couple of types above are suggested by @lift :: m a -> t m a@. However, this does not imply @lift . lift :: m a -> t1 t2 m a@! The reality is that @lift . lift :: m a -> t1 (t2 m) a@! This is a bit of a double-edged sword. I'm sure if you've spent much time with transformers, you're familiar with the clash of Haskell's type system vs. monads associative composition in category theory. Yet I have not found mtl style or freer-monads quite nice enough to use. Feel free to convince me otherwise.
 -- Use @morphism240@ to lift this restriction, so that you can mix degrees of monad transformers. (morphism240 is just morphism239 but with a less specific type signature.) I chose to have both 239 and 240 because 239's signature is easy to understand, whereas 240's is so general that it's difficult to determine its use cases, and it's good to be aware/careful about manipulating monad transformers.
+-- PS. I'm sure this could be better implemented using comonad and mtl, but I'm not interested in (orphan) instancing common monad transformers as comonads, so meh. (morphism239 could be written in terms of @lower@ (http://hackage.haskell.org/package/comonad-5.0.4/docs/Control-Comonad-Trans-Class.html).)
+-- Oh, wait. Actually this is just like @embed@, but doesn't require one to instance MMonad. (http://hackage.haskell.org/package/mmorph-1.1.2/docs/Control-Monad-Morph.html)
 morphism239 :: (Monad m)
             => (t m a -> m b) -- ^ unwrap the first transformer. Usually run*, e.g. @runStateT@, @runBugT@
             -> (b -> s m x) -- ^ a morphism that relates the prior two unwrapping functions
@@ -192,7 +191,8 @@ morphism46 wrap unwrap g = wrap <% on (liftA2 g) unwrap
 -- Which properties the homomorphism will preserve will depend on the objects you're working with, so the instances here are conservatively few.
 -- Note that this class is limited because GHC allows no overlap of type family instances. For example, I can't instance both a to [a] and [a] to a, since a is a type variable and can match a whole lot of instances (remember that GHC does not consider the context; it just matches the RHS of (=>) in a signature.)
 -- I'm not sure how useful this structure is, for either general or specific purposes.
--- Perhaps using @Category@ is useful (instead)? Then homomorphisms would be composed applicatively. I have yet to dabble with Backpack <https://ghc.haskell.org/trac/ghc/wiki/Backpack>
+-- Perhaps using @Category@ is useful (instead)? Then homomorphisms would be composed applicatively. I have yet to dabble with Backpack <https://ghc.haskell.org/trac/ghc/wiki/Backpack> (I'm assuming by the isomorphism classes about string-like types that backpack has applications in isomorphisms or embeddings.)
+-- TODO: can use Ed Kmett's semigroupoid library's Iso type <http://hackage.haskell.org/package/semigroupoids-5.3.1/docs/Data-Isomorphism.html> for this?
 class As b where
     type To b
     as :: To b -> b
@@ -291,22 +291,3 @@ partitionM p = foldMapM (\a -> bool (mempty, pure a) (pure a, mempty) <$> p a)
 
 findM :: (Foldable t, Monad m) => (a -> m Bool) -> t a -> m (Maybe a)
 findM p = liftM getAlt . foldMapM (\x -> Alt . bool Nothing (Just x) <$> p x)
-
-#ifdef EXPERIMENTAL
-        Catamorphism: a unique homomorphism from an initial F-algebra with given endofunctor into some other algebra. Here in Haskell ADTs are re-expression of initial algebras.
--- | Allows composing functions in a catamorphism, e.g.
--- Catamorphism's are right-associative; use flipCata to convert to left-associative
--- f is the composition function (mappend for monoids); otherwise specifiable 
-newtype Catamorphism f a b = Cata {runCata :: (\a b -> b)} -- TODO: rewrite in terms of f
-map = Catamorphism (:) (f) -- rather than (:), parameterize insertion/composition function (or require semigroup with initial element, or foldMap-like function for monoids
--- of course, these catamorphisms are made to work for folds; foldr (cata₂ . cata₁)
--- implementation of the category of catamorphisms may obsolete fold*n functions declared earlier in this NStdLib module
-instance Category (Catamorphism compose) where
-    id = Catamorphism (\a _ -> compose a)
-    f . g = cT...? -- :: (b -> c -> c) -> (a -> b -> b) ->
-
-Example: tree fold: for a fixed type a, consider functor mapping type b to a type that contains a copy of each term of a, as well as all pairs of b's (terms of the product type of two instances of the type b). An algebra consists of a function to b, which either acts on an a term of two b terms, i.e. a -> b and b -> b -> b, i.e. suppose a terminus t reachable by either an f : a -> t, or g : b -> b -> t, t = b.
-type TreeAlgebra a b = (a -> b, b -> b -> b) -- i.e. type TreeAlrebraFunctors a b = (a -> b) | (b -> b -> b) -- but that's not legal Haskell; see below:
-data Tree a {- terminus t -} = Leaf a {- a functor f : a -> t -} | Branch (Tree a) (Tree a) {- g : b -> b -> t -} -- where, clearly we can see, t = b
-
-#endif
