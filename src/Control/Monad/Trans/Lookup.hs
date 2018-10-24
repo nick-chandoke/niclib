@@ -34,12 +34,6 @@ import Data.Either (either)
 import Prelude hiding (lookup, Applicative(..))
 import qualified Data.Bifunctor as BiF
 
--- TODO: comment-out after doing example
-import qualified Prelude as P
-import Data.Functor.Identity
-import NicLib.NStdLib (readMaybe)
-import NicLib.Errors (liftME)
-
 import qualified Data.Set as S -- containers
 
 -- NicLib
@@ -67,7 +61,10 @@ instance Ord ParseError where
     compare (ParseError _ _) (Undefined _) = GT
     compare (ParseError x d1) (ParseError y d2) = compare x y
 
-lookup :: Monad m => String -> (String -> Either ParseError a) -> LookupT s m a
+-- | The primary way to use @LookupT@.
+lookup :: Monad m => String -- ^ variable name to lookup
+                  -> (String -> Either ParseError a) -- ^ morphism from string to Haskell data type
+                  -> LookupT s m a
 lookup k p = LookupT $ \ms l -> ms >>= \s -> l k s >>= \case
         Nothing -> pure . Left . S.singleton $ Undefined k
         Just v -> pure $ BiF.first S.singleton (p v)

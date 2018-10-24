@@ -3,7 +3,7 @@ build-type: Simple
 cabal-version: >=1.10
 bug-reports: https://github.com/nick-chandoke/niclib/issues/new
 copyright: Copyright (c) 2016-2018 Nicholas Chandoke
-description: URL, Filesystem, networking, and aeson helper methods. Miscellaneous functions, and implementation of Trie, a buffer that holds n most recent inserts/pushes, and a set that's memory efficient for storing redundant data.
+description: All kinds of stuff. Just look around. Everything's documented.
 extra-source-files: README.md
 homepage: http://github.com/nick-chandoke/niclib
 license-file: LICENSE
@@ -12,7 +12,7 @@ maintainer: Nicholas Chandoke <nicholas.chandoke@gmail.com>
 name: NicLib
 stability: Stable
 synopsis: Hodgepodge of functionality. The personal library of Nic Chandoke. Hopefully useful to others, too.
-tested-with: GHC ==8.4.2
+tested-with: GHC ==8.4.3
 version: 0.1.4
 
 library
