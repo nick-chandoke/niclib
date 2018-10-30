@@ -22,20 +22,19 @@ import Prelude hiding (lookup, null)
 import qualified Data.IntMap.Strict as IM
 import qualified Data.Map.Strict as M
 import GHC.Exts
-import Data.Binary
+import Data.Store (Store)
+import GHC.Generics (Generic)
 
 -- | The idea here is that you can insert an item into a map, and you'll get back an index by which you can retrieve it later. The motivation for this is that you can store many Int references to a value, but only one copy of the value is held in memory (well, by current implementation, actually two.)
--- Thus, for storing lots of data with common attributes (e.g. strings with common prefixes, URLs with common schemes or domains), memory usage is greatly reduced.
--- Fortunately, because there's a bijection between indicies and values, you can compare equality of two values simply by comparing their numbers. However, remember that the indicies are unordered! The Ordering of two indicies tells which one was inserted into the map first - nothing else!
-data IndexedSet a = IndexedSet { nextIndex :: Int, nums :: IntMap a, vals :: Map a Int } deriving Eq
+-- In other words, it's like putting a row into a database, and generating & returning a primary key for it.
+-- Thus, for storing lots of data with common attributes (e.g. URLs with common schemes or domains, or songs with common album names), memory usage is greatly reduced.
+data IndexedSet a = IndexedSet
+    { nextIndex :: Int
+    , nums :: IntMap a
+    , vals :: Map a Int
+    } deriving (Generic, Eq)
 
--- TODO: replace with store instance
-instance Binary a => Binary (IndexedSet a) where
-    put (IndexedSet {..}) = do
-        put nextIndex
-        put nums
-        put vals
-    get = IndexedSet <$> get <*> get <*> get
+instance (Ord a, Store a) => Store (IndexedSet a)
 
 instance Show a => Show (IndexedSet a) where
     show = show . M.toList . vals

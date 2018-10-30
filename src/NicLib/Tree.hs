@@ -5,18 +5,22 @@ module NicLib.Tree
 , pruneTree
 , matchTree
 , selectBranches
-, readIndented
+, readIndentedGeneral
+, readIndentedText
+, readIndentedTextLazy
 ) where
 
 import Data.Char (isSpace)
 import Data.Foldable
 import Data.Graph -- containers
-import Data.Int (Int64)
 import Data.Tree
-import NicLib.Errors (liftME, err)
-import NicLib.NStdLib ((>>>), (***), (>=>), foldM, empty, bool', uncons, maybeToList, second)
+import NicLib.Errors (liftME)
+import NicLib.NStdLib ((***), empty, bool', uncons, maybeToList, second)
 import qualified Data.Text as T'
+import qualified Data.ListLike as LL
 import qualified Data.Text.Lazy as T
+import Data.Sequence (Seq)
+import qualified Data.Bifunctor as BiF
 
 {-
 data Rel = Child | Sibling | Parent deriving (Show, Eq, Ord)
@@ -70,39 +74,88 @@ matchTree (p:ps) (Node {rootLabel, subForest})
 selectBranches :: (t -> Bool) -> Tree t -> [Tree t]
 selectBranches p = go [] where go ret n@(Node {rootLabel, subForest}) = if p rootLabel then n:ret else foldMap (go ret) subForest
 
--- | reads structures of form
--- parent
---     child1
---     child2
---         grandchild1
---     child3
---    ⋮
--- Must be in either tabs or spaces exclusively; any mixture of leading tabs and spaces results in undefined behavior.
--- Returns either a parsing error message or a tree
--- Note that @readIndented@ morphism and input arguments are lazy text, but it returns strict text in its Left constructor.
-readIndented :: (T.Text -> a) -> T.Text -> Either T'.Text (Tree a) -- TODO: use conduit instead of foldM (in fact, since it's lazy text, it should be a lazy foldr!)
-readIndented f = (T.lines >>> liftME "readIndented: cannot parse a tree from an empty list of nodes!" . uncons)
-              >=> \(textToPair -> p, ts) -> snd . listToBranch <$> foldM go [p] ts
+-- TODO: use conduit instead of foldM (in fact, since it's lazy text, it should be a lazy foldr!)
+-- | Generalizes @readIndented@ by determining tree level by a given function rather than the number of spaces. Created to accomodate the Html.Transforms.AutoSections.autoSections function in my nixys-server-box package, which wraps markdown headings in <section>'s:
+-- @
+-- ## H₂₁
+-- text₂₁
+-- 
+-- ### H₃₁
+-- text₃₁
+-- 
+-- ### H₃₂
+-- text₃₂
+-- 
+-- #### H₄
+-- text₄
+-- 
+-- ## H₂₂
+-- text₂₂
+-- @
+-- becomes
+-- @
+-- <section>
+--     ## H₂₁
+--     text₂₁
+-- 
+--     <section>
+--         ### H₃₁
+--         text₃₁
+--     </section>
+-- 
+--     <section>
+--         ### H₃₂
+--         text₃₂
+-- 
+--         <section>
+--             #### H₄
+--             text₄
+--         </section>
+--     </section>
+-- </section>
+-- 
+-- <section>
+--     ## H₂₂
+--     text₂₂
+-- </section>
+-- @
+-- If a node is encountered on a lower level than the root, then @readIndentedGeneral@ begins parsing it as another tree, and adds it to the sequence of parsed trees.
+readIndentedGeneral :: (LL.ListLike full Char, Integral i)
+                    => (full -> T'.Text) -- ^ function to convert input to strict text for output error messages (you may want to use a whitespace stripping function in there)
+                    -> (full -> Either a (i, a)) -- ^ get (length, item to put into tree node); or @Left a@ for lines whose content should be added as siblings
+                    -> [full] -- ^ input to process
+                    -> Seq (Either T'.Text (Tree a)) -- ^ I favor this over @Either Text (Seq (Tree a))@ because you may prefer this over that; but if you prefer that, you can always use @traverse@.
+readIndentedGeneral toL toLvl'R is = (\case Left l -> pure (Left l); Right (p, ts) -> go [p] ts) $ do -- latter Left l isn't equal in type to the (Left l) that was matched against!
+    (root, ts) <- liftME "Cannot parse a tree from an empty list of nodes!" $ uncons is
+    p <- BiF.first (const "First line must parse into the tree's root; could not derive node level and value from first line.") $ textToPair root -- Nothing nodes are always siblings; thus Nothing nodes must have a parent; thus a Nothing node cannot be a root
+    pure (p, ts)
     where
---      go :: [(Int64, Tree a)] -> T.Text -> Either T'.Text [(Int64, Tree a)] -- existential crisis if uncomment
-        -- stuff with prime (e.g. i') denotes the current step; the same variable name without the prime denotes the prior step's values
+--      go :: [(i, Tree a)] -> [full] -> Seq (Either T'.Text (Tree a)) -- existential crisis if uncomment
+        -- a trailing prime on variable names (e.g. i') denotes that of the current step; the same variable name without the prime denotes the prior step's values
         -- Mnemonics: t(ree), i(ndentation), p(air), s(stack). Note that variable "text" is used ONLY for returning error messages! p' is the form of text that's actually used in computation!
         -- Because of listToBranch, pushing a node onto the stack corresponds to increasing the depth of the tree by 1
-        go s@((i,t):ps) text@(textToPair -> p'@(i',_)) = case compare i' i of -- ignore non-exhaustive pattern-match warning; initializing go with [p] above
-            GT -> pure $ p':s -- current text is more indented than prior text; push this pair to the stack
-            EQ -> case ps of -- EQ means that p is a single-node/childless tree; because it won't have any children, we can assuredly pop it off the stack and fold it into its parent!
-                [] -> Left $ "Tree must have exactly one root; \"" <> T'.stripStart (T.toStrict text) <> "\" cannot also be a root."
-                (parent:ancestors) -> pure $ p' : second (t `putInTree`) parent : ancestors -- second (t `putInTree`) parent = listToBranch [p, parent], but more efficient
-            LT -> case span ((/=i') . fst) s of
-                (_,[]) -> Left $ "Improperly formatted list: a node with text value \"" <> T'.stripStart (T.toStrict text) <> "\" should have the same indentation as some previous node, but it doesn't."
-                (a, b:bs) -> case (a <> [b], bs) of -- we need to go one further than span, to include the last sibling of p'
-                                                    -- again, ignore inexhaustive pattern match warning; (_,[]) is matched on the above line
-                    (listToBranch -> (_,z), parent:ancestors) -> pure $ p' : second (z `putInTree`) parent : ancestors
-                                   -- ^ should equal i'
+        go s [] = close (pure s)
+        go s@((i,t):ps) (text:ts) =
+            case textToPair text of
+                Left l -> go ((i, pure l `putInTree` t):ps) ts -- put moot node as child of stack's top node. Don't modify the current indentation.
+                Right p'@(i',_) -> case compare i' i of
+                    GT -> go (p':s) ts -- current text is more indented than prior text; push this pair to the stack
+                    EQ -> case ps of -- EQ means that p is a single-node/childless tree; because it won't have any children, we can assuredly pop it off the stack and fold it into its parent!
+                        [] -> pure . Left $ "Tree must have exactly one root; \"" <> toL text <> "\" cannot also be a root."
+                        (parent:ancestors) -> go (p' : second (t `putInTree`) parent : ancestors) ts -- second (t `putInTree`) parent = listToBranch [p, parent], but more efficient
+                    LT -> case span ((/=i') . fst) s of
+                        (_,[]) -> pure . Left $ "Improperly formatted list: a node with text value \"" <> toL text <> "\" should have the same indentation as some previous node, but it doesn't."
+                        (a, b:bs) -> case (a <> [b], bs) of -- we need to go one further than span, to include the last sibling of p'
+                            (_,[]) -> close (pure s) <> go [case textToPair text of Right q -> q] ts -- like the entrypoint to readIndentedGeneral, except that we know that we're given a list starting with a Right-like element
+                            (listToBranch -> (_,z), parent:ancestors) -> go (p' : second (z `putInTree`) parent : ancestors) ts
+                                           -- ^ should equal i'
 
-        -- | (indention, Node text [])
-        -- textToPair :: T.Text -> (Int64, Tree a) -- existential crisis if uncomment
-        textToPair = (T.length *** pure . f) . T.span isSpace
+        close :: Either T'.Text [(i, Tree a)] -> Seq (Either T'.Text (Tree a))
+        close = pure . fmap (snd . listToBranch) -- zip-up a [(i, Tree a)] and pull the tree out
+
+        -- | (indention_level, Node text [])
+--      textToPair :: full -> Either a (i, Tree a) -- existential crisis if uncomment
+        textToPair = fmap (second pure) . toLvl'R
         
         -- | @x `putInTree` y@ puts x into y's subForest
         putInTree :: Tree a -> Tree a -> Tree a
@@ -115,5 +168,22 @@ readIndented f = (T.lines >>> liftME "readIndented: cannot parse a tree from an 
         --      └─ gc)
         -- Note that the following assertion should hold: ∀i j ∈ fst <$> inputList: i < j => inputList !! i > inputList !! j.
         -- We return the minimum because listToBranch represents folding a list into a (sub)tree; that subtree is rooted at a particular level; this level is what's returned.
-        listToBranch :: [(Int64, Tree a)] -> (Int64, Tree a)
-        listToBranch = maybe (error "Logic error in function readIndented: empty list passed to listToBranch. Please report this bug.") (uncurry $ foldl' (\(_,b) (i,a) -> (i, b `putInTree` a))) . uncons
+        listToBranch :: [(i, Tree a)] -> (i, Tree a)
+        listToBranch = maybe (error "Logic error in function readIndented(General): empty list passed to listToBranch. Please report this bug.") (uncurry $ foldl' (\(_,b) (i,a) -> (i, b `putInTree` a))) . uncons
+
+-- | reads structures of form
+-- parent
+--     child1
+--     child2
+--         grandchild1
+--     child3
+--    ⋮
+-- Must be in either tabs or spaces exclusively; any mixture of leading tabs and spaces results in undefined behavior.
+-- Returns either a parsing error message or a tree
+-- Note that @readIndented@ morphism and input arguments are lazy text, but it returns strict text in its Left constructor.
+readIndentedText :: (T'.Text -> a) -> T'.Text -> Seq (Either T'.Text (Tree a))
+readIndentedText toR = readIndentedGeneral (T'.stripStart) (pure . (T'.length *** toR) . T'.span isSpace) . T'.lines
+
+-- | Lazy text version of @readIndentedText@
+readIndentedTextLazy :: (T.Text -> a) -> T.Text -> Seq (Either T'.Text (Tree a))
+readIndentedTextLazy toR = readIndentedGeneral (T'.stripStart . T.toStrict) (pure . (T.length *** toR) . T.span isSpace) . T.lines
