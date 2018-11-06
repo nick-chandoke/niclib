@@ -14,6 +14,7 @@ import qualified Data.Bifunctor as BiF
 setFind :: Ord a => (a -> Bool) -> Set a -> Maybe a
 setFind = cT (bool' (Just . S.elemAt 0) (const Nothing) S.null) S.filter
 
+-- TODO: I should change partitionBy to return (ListLike full a) => Vector (b, full), rather than Vector (b, Set a); this requires a to implement Ord, but that's not a sensible restriction!
 -- | Group things by a predicate whose domain and codomain both permit an ordering
 -- Partition by the first letter:
 -- @partitionBy head ["aardvark", "apple", "banana", "baby", "candy", "dragon", "dragonite", "daring", "zoo", "zooology"]@

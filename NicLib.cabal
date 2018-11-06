@@ -20,7 +20,6 @@ library
   hs-source-dirs: src
   exposed-modules:
       Control.Monad.Trans.Lookup
-      NicLib.Aeson
       NicLib.Errors
       NicLib.FileSystem
       NicLib.List
@@ -37,8 +36,6 @@ library
   build-depends:
       base > 4 && < 5,
       ListLike,
-      aeson,
-      aeson-pretty,
 --    boolean-like,
       bytestring,
       containers,

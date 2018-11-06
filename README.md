@@ -1,10 +1,6 @@
 # NicLib
 
-*nixy's presonal ```Prelude```*
-
-## Current Status
-
-Much of library has been pruned in favor of better packages I've recently discovered (see below.)
+Miscellaneous functions and objects that I've created in the line of my general needs, or for specific projects.
 
 ## Summary
 
