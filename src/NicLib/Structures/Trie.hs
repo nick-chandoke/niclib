@@ -43,13 +43,13 @@ module NicLib.Structures.Trie
 import Data.Sequence (Seq)
 import Control.Arrow
 import Data.Bool (bool)
-import Data.Function ((&), fix)
+import Data.Function (fix)
 import Data.ListLike (ListLike)
 import Data.Maybe
 import Data.Ord
 import NicLib.NStdLib (OrderBy(..), cT, (<%))
 import NicLib.Set (setFind)
-import Prelude hiding (zip, map, null, foldr, traverse_, lookup, empty, filter, head)
+import Prelude hiding (zip, map, null, foldr, lookup, filter, head)
 import qualified Data.ListLike as LL
 import qualified Data.Set as S
 import qualified Prelude as Pl
@@ -68,8 +68,7 @@ instance (Show item, Ord item, Show tag) => Show (Trie item tag) where
         where
             indentAmt = 4 -- number of spaces that makes an indentation
             go tab vbars (getTrie -> trie) = flip foldMap trie $ \t -> -- go is recursive
-                let indentation = (pred tab) * indentAmt - 1
-                    isMaxElement = case t of
+                let isMaxElement = case t of
                         Stop _ -> S.size trie == 1
                         Trie' v _ -> v == val (S.findMax trie)
                     graphicBranch = fix (\f s i -> if i < tab then f (s ++ bool " " "│" (i `S.member` vbars) ++ replicate (indentAmt - 1) ' ') (i + 1) else s) "" 1 ++ bool "├" "└" isMaxElement
@@ -259,4 +258,4 @@ match ss t = go ss t [] where
 -- | inserts a sub-Trie' into a larger Trie, using a stack whose head is childmost Trie
 -- first parameter gives the values of Trie's for childless nodes in the history stack
 zip :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> [t] -> t
-zip (LL.reverse -> s) = fst . flip (LL.foldl' (\i@(t, (h:hs)) c -> (Trie $ S.insert (Trie' c t) (getTrie h), hs))) s <% (,) -- s is guaranteed to be at least as long as h, but in practice should always be the same length. Thus zip should throw any index out of bounds error, as it indicates a logic error in whatever method uses zip
+zip (LL.reverse -> s) = fst . flip (LL.foldl' (\(t, (h:hs)) c -> (Trie $ S.insert (Trie' c t) (getTrie h), hs))) s <% (,) -- s is guaranteed to be at least as long as h, but in practice should always be the same length. Thus zip should throw any index out of bounds error, as it indicates a logic error in whatever method uses zip

@@ -7,6 +7,9 @@ module NicLib.Statistics
 , printRandDist
 ) where
 
+import Control.Arrow ((&&&), (***), first, second)
+import Data.Maybe (fromMaybe, listToMaybe)
+import Control.Monad.IO.Class
 import Data.Random
 import Data.Random.Source.DevRandom
 import NicLib.NStdLib

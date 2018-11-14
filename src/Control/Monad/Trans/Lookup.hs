@@ -1,4 +1,4 @@
--- | Lookup keys in a lookup table. Collects keys that either aren't present or fail to parse. Useful for its @Applicative@ instance.
+-- | Applicative parsing for structures that embed some kind of lookup table. Rather than short-circuiting, @LookupT@ collects keys that either aren't present or fail to parse.
 -- (A very thorough) example:
 -- @
 -- import Control.Monad.Trans.Lookup
@@ -51,6 +51,14 @@ module Control.Monad.Trans.Lookup
 , lookupFileBSLC
 , lookupFileT
 , lookupFileTL
+, lookupEnvWithDef
+, lookupFileWithDef
+, lookupFileBSWithDef
+, lookupFileBSLWithDef
+, lookupFileBSCWithDef
+, lookupFileBSLCWithDef
+, lookupFileTWithDef
+, lookupFileTLWithDef
 ) where
 
 -- base
@@ -104,6 +112,7 @@ instance Ord ParseError where
     compare (ParseError x _) (ParseError y _) = compare x y
 
 -- | The primary way to create a @LookupT@ object
+-- Remember that you can provide default values by using @<|> defaultValue@ in the lookup function (the 3rd parameter)
 lookup :: (Monad m, Show i)
        => (i -> String) -- ^ for collecting identifiers as error output strings
        -> (a -> m (Either ParseError b)) -- ^ function that parses a looked-up value into a final value (e.g. @read \@Int@)
@@ -171,3 +180,32 @@ lookupFileT = lookupFileCommon TIO.readFile
 
 lookupFileTL :: String -> LookupT IO T.Text
 lookupFileTL = lookupFileCommon TLIO.readFile
+
+-- With Defaults
+
+lookupEnvWithDef :: Monad m => b -> [(String, b)] -> String -> LookupT m b
+lookupEnvWithDef def = lookup id (pure . Right) (pure . (<|> Just def) <% P.lookup)
+
+lookupFileCommonWithDef :: (String -> IO b) -> b -> String -> LookupT IO b
+lookupFileCommonWithDef f def = lookup id (pure . Right) (\x _ -> doesFileExist x >>= bool (pure $ Just def) (pure <$> f x)) undefined
+
+lookupFileWithDef :: String -> String -> LookupT IO String
+lookupFileWithDef = lookupFileCommonWithDef readFile
+
+lookupFileBSWithDef :: BS'.ByteString -> String -> LookupT IO BS'.ByteString
+lookupFileBSWithDef = lookupFileCommonWithDef BS'.readFile
+
+lookupFileBSLWithDef :: BS.ByteString -> String -> LookupT IO BS.ByteString
+lookupFileBSLWithDef = lookupFileCommonWithDef BS.readFile
+
+lookupFileBSCWithDef :: BSC'.ByteString -> String -> LookupT IO BSC'.ByteString
+lookupFileBSCWithDef = lookupFileCommonWithDef BSC'.readFile
+
+lookupFileBSLCWithDef :: BSC.ByteString -> String -> LookupT IO BSC.ByteString
+lookupFileBSLCWithDef = lookupFileCommonWithDef BSC.readFile
+
+lookupFileTWithDef :: T'.Text -> String -> LookupT IO T'.Text
+lookupFileTWithDef = lookupFileCommonWithDef TIO.readFile
+
+lookupFileTLWithDef :: T.Text -> String -> LookupT IO T.Text
+lookupFileTLWithDef = lookupFileCommonWithDef TLIO.readFile

@@ -1,18 +1,7 @@
--- | Personal Prelude
+-- | Generally useful functions
 module NicLib.NStdLib
-( (<>)
-, module Control.Arrow
-, module Control.Monad
-, module Control.Applicative
-, module Data.Traversable
-, module Data.Foldable
-, module Data.Maybe
-, module Data.Bool
-, module Data.Functor.Identity
-, module Control.Monad.IO.Class
-, (!!?)
+( (!!?)
 , (%>)
-, (&)
 , (<%)
 , (<&&>)
 , (<&>)
@@ -22,7 +11,6 @@ module NicLib.NStdLib
 , (↔)
 , As(..)
 , OrderBy(..)
-, bimap
 , bool'
 , both
 , cT
@@ -33,14 +21,12 @@ module NicLib.NStdLib
 , morphism239
 , morphism240
 , morphism46
-, on
 , partitionM
 , pxor
 , readMaybe
 , replicateM'
 , showBin
 , sxor
-, uncons
 , whenM
 , xor
 ) where
@@ -49,23 +35,18 @@ import Control.Applicative
 import Control.Arrow
 import Control.Category
 import Control.Monad
-import Control.Monad.IO.Class
 import Control.Monad.Trans.Accum (AccumT, add, runAccumT)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT(..), runExceptT)
 import Data.Bifunctor as BiF
 import Data.Bool
 import Data.Char
-import Data.Function ((&), on, fix) -- importing everything messes with the ArrowCurry definition
+import Data.Function (on, fix) -- importing everything messes with the ArrowCurry definition
 import Data.Foldable
-import Data.Functor.Identity
-import Data.List
 import Data.Maybe
 import Data.Monoid (Alt(..))
-import Data.Semigroup
 import Data.Set (Set)
 import Data.String
-import Data.Traversable
 import Data.Tree
 import Numeric (showIntAtBase)
 import Prelude hiding (GT, LT, EQ, (.), id, curry, uncurry)

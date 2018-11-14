@@ -15,6 +15,7 @@ module NicLib.List
 , splitOn
 ) where
 
+import Data.Traversable (fmapDefault)
 import Control.Applicative ((<|>))
 import NicLib.NStdLib
 import qualified Data.List as L

@@ -9,6 +9,7 @@ module NicLib.FileSystem
 , cd
 , ls
 , mv
+, mvt
 , cp
 , cpWithMetadata
 , cpPermissions
@@ -25,28 +26,33 @@ module NicLib.FileSystem
 , realPath
 ) where
 
+import Control.Applicative
+import Control.Arrow ((&&&))
+import Control.Monad (guard)
 import Control.Monad.Catch
-import Control.Monad.Trans.Reader
-import Data.IORef
-import Data.Sequence ((|>))
-import Control.Monad.Trans.Except
 import Control.Monad.IO.Class
+import Control.Monad.Trans.Except
+-- import Control.Monad.Trans.Reader -- * uncomment when finishing dirdiff
+import Data.Bool (bool)
 import Data.Foldable
+-- import Data.IORef -- *
 import Data.ListLike (ListLike)
+import Data.Maybe (isJust, fromMaybe)
+-- import Data.Sequence ((|>)) -- *
 import Data.String (IsString(..))
 import Data.Text (Text)
-import Data.Tree
+-- import Data.Tree -- *
 import NicLib.Errors
 import NicLib.List
 import NicLib.NStdLib
-import NicLib.Text (quote)
+-- import NicLib.Text (quote) -- *
 import Prelude hiding (FilePath)
 import System.FilePath (pathSeparator)
 import System.IO hiding (FilePath)
 import System.Posix.Files (createSymbolicLink, readSymbolicLink)
 import qualified Data.ListLike as LL
-import qualified Data.Set as S
-import qualified Data.Text as T'
+-- import qualified Data.Set as S -- *
+-- import qualified Data.Text as T' -- *
 import qualified Prelude
 import qualified System.Directory as D
 
@@ -116,7 +122,7 @@ mkdir dir = (liftIO $ D.createDirectoryIfMissing True dir) `orThrow` "couldn't c
 
 -- equivalent to bash "mkdir -p dir && cd dir"
 mkcd :: (MonadIO m, MonadCatch m) => String -> m ()
-mkcd = mkdir &&& cd >*> (>>)
+mkcd = mkdir &&& cd >*> (*>)
 
 -- | Create a symbolic link. (POSIX ONLY!)
 -- same order as cp: ln src (Just dest) will create a link called dest that points to src.

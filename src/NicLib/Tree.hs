@@ -10,17 +10,21 @@ module NicLib.Tree
 , readIndentedTextLazy
 ) where
 
+import Control.Applicative (empty)
+import Control.Arrow ((***), second)
 import Data.Char (isSpace)
 import Data.Foldable
 import Data.Graph -- containers
+import Data.List (uncons)
+import Data.Maybe (maybeToList)
+import Data.Sequence (Seq)
 import Data.Tree
 import NicLib.Errors (liftME)
-import NicLib.NStdLib ((***), empty, bool', uncons, maybeToList, second)
-import qualified Data.Text as T'
-import qualified Data.ListLike as LL
-import qualified Data.Text.Lazy as T
-import Data.Sequence (Seq)
+import NicLib.NStdLib (bool')
 import qualified Data.Bifunctor as BiF
+import qualified Data.ListLike as LL
+import qualified Data.Text as T'
+import qualified Data.Text.Lazy as T
 
 {-
 data Rel = Child | Sibling | Parent deriving (Show, Eq, Ord)

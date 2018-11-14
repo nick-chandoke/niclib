@@ -28,7 +28,11 @@ module NicLib.Errors
 , withBugAccum
 ) where
 
+import Control.Arrow (second)
+import Control.Exception.Safe (throwString) -- safe-exceptions
+import Control.Monad ((<=<))
 import Control.Monad.Catch
+import Control.Monad.IO.Class
 import Control.Monad.Trans.Accum
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Except
@@ -36,12 +40,11 @@ import Control.Monad.Trans.Writer
 import Data.ListLike (StringLike)
 import Data.ListLike.String hiding (fromString)
 import Data.Text (Text) -- text
-import qualified Data.Text as T' -- text
 import NicLib.NStdLib
 import System.Exit
 import System.IO (stderr, hPutStrLn)
 import System.IO.Error
-import Control.Exception.Safe (throwString) -- safe-exceptions
+import qualified Data.Text as T' -- text
 
 -- | Applies @<>@ to monoidal writer values and accumulations:
 -- @runWriter $ mtell "hello!" <> return (Sum 4) <> return (Sum 20) <> mtell " hoho"@ --> (Sum {getSum = 24},"hello! hoho")
