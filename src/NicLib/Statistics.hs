@@ -1,3 +1,6 @@
+-- | Module useful for exploring statistical distributions
+--
+-- Much of this module is deprecated, as it's about outputting distribution graphics as text. This is stupid; it should be viewed via HTML, probably leveraging Lucid or PureScript!
 module NicLib.Statistics
 ( randDist
 , showHist
@@ -17,8 +20,6 @@ import NicLib.Set
 import qualified Data.Set as S
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.IO as TLIO
-
--- module useful for exploring statistical distributions
 
 printRandDist :: Int -> RVar Double -> IO ()
 printRandDist i d = randDist i d >>= TLIO.putStrLn . showHist . toHist Nothing

@@ -1,5 +1,7 @@
 -- | Applicative parsing for structures that embed some kind of lookup table. Rather than short-circuiting, @LookupT@ collects keys that either aren't present or fail to parse.
+--
 -- (A very thorough) example:
+--
 -- @
 -- import Control.Monad.Trans.Lookup
 -- import Data.Functor.Identity
@@ -22,27 +24,37 @@
 -- lkup table i = lookup id (pure . pure) (Identity <% P.lookup) table i
 -- 
 -- testFn t = runLookup $ C -- parse into C from table t
---         <$> lkup t "a"
---         <*> lkup t "b"
---         <*> lkup t "c"
+--         \<$\> lkup t "a"
+--         \<*\> lkup t "b"
+--         \<*\> lkup t "c"
 -- 
 -- testFnWParse t = runLookup $ D
---               <$> lkup t "b"
---               <*> lookup id (pure . parseInt) (Identity <% P.lookup) t "a"
---               <*> lkup t "c" -- parse into D
+--               \<$\> lkup t "b"
+--               \<*\> lookup id (pure . parseInt) (Identity <% P.lookup) t "a"
+--               \<*\> lkup t "c" -- parse into D
 -- @
--- @testFn table1@ --> Left (fromList [Undefined {varName = "a"},Undefined {varName = "c"}])
--- @testFn table2@ --> Right (C "valA" "value" "valC")
 --
--- @testFnWParse table2@ --> Left (fromList [ParseError {varName = "valA", cause = "not an integer"}])
--- @testFnWParse table3@ --> Right (D "value" 35 "valC")
--- @testFnWParse table4@ --> Left (fromList [Undefined {varName = "b"},Undefined {varName = "c"},ParseError {varName = "3i5", cause = "not an integer"}])
+-- >>> testFn table1
+-- Left (fromList [Undefined {varName = "a"},Undefined {varName = "c"}])
+--
+-- >>> testFn table2@
+-- Right (C "valA" "value" "valC")
+--
+-- >>> testFnWParse table2
+-- Left (fromList [ParseError {varName = "valA", cause = "not an integer"}])
+--
+-- >>> testFnWParse table3
+-- Right (D "value" 35 "valC")
+--
+-- >>> testFnWParse table4
+-- Left (fromList [Undefined {varName = "b"},Undefined {varName = "c"},ParseError {varName = "3i5", cause = "not an integer"}])
 module Control.Monad.Trans.Lookup
 ( LookupT (..)
 , runLookup
 , Lookup
 , lookup
 , ParseError (..)
+-- * Common Lookup Functions
 , lookupEnv
 , lookupFile
 , lookupFileBS
@@ -51,6 +63,7 @@ module Control.Monad.Trans.Lookup
 , lookupFileBSLC
 , lookupFileT
 , lookupFileTL
+-- * Common Lookup Functions With Defaults
 , lookupEnvWithDef
 , lookupFileWithDef
 , lookupFileBSWithDef
@@ -95,14 +108,16 @@ type Lookup a = LookupT Identity a
 runLookup :: Lookup a -> Either (S.Set ParseError) a
 runLookup = runIdentity . runLookupT
 
--- | For whether an environment variable is not defined, or fails to parse into a desired Config field; String of ParseError is description of parse error
-data ParseError = Undefined -- ^ denotes that a variable could not be found
-                    { varName :: String }
-                | ParseError -- ^ denotes that a variable could not be parsed from a string
-                    { varName :: String
-                    , cause :: String -- ^ description of why the parsing failed
-                    }
-                deriving (Eq, Show)
+-- | For whether an environment variable is not defined, or fails to parse into a desired Config field
+data ParseError
+    -- | denotes that a variable could not be found
+    = Undefined { varName :: String }
+    -- | denotes that a variable could not be parsed from a string
+    | ParseError
+        { varName :: String
+        , cause :: String -- ^ description of why the parsing failed
+        }
+    deriving (Eq, Show)
 
 -- | In a set of ParseError's, I want Undefined variables to be mentioned before variables that failed to parse
 instance Ord ParseError where
@@ -112,7 +127,7 @@ instance Ord ParseError where
     compare (ParseError x _) (ParseError y _) = compare x y
 
 -- | The primary way to create a @LookupT@ object
--- Remember that you can provide default values by using @<|> defaultValue@ in the lookup function (the 3rd parameter)
+-- Remember that you can provide default values by using @\<|\> defaultValue@ in the lookup function (the 3rd parameter)
 lookup :: (Monad m, Show i)
        => (i -> String) -- ^ for collecting identifiers as error output strings
        -> (a -> m (Either ParseError b)) -- ^ function that parses a looked-up value into a final value (e.g. @read \@Int@)
@@ -121,8 +136,8 @@ lookup :: (Monad m, Show i)
        -> i -- ^ identifier to lookup
        -> LookupT m b
 lookup toStr p l s i = LookupT $ l i s >>= \case
-        Nothing -> pure . Left . S.singleton $ Undefined (toStr i)
-        Just a -> BiF.first S.singleton <$> p a
+    Nothing -> pure . Left . S.singleton $ Undefined (toStr i)
+    Just a -> BiF.first S.singleton <$> p a
 
 instance Applicative m => Applicative (LookupT m) where
     pure = LookupT . pure . pure
@@ -152,8 +167,6 @@ instance MonadIO m => MonadIO (LookupT m) where
 instance MonadTrans LookupT where
     lift = LookupT . fmap pure
 
--- Common Lookup Functions --
-
 lookupEnv :: Monad m => [(String, b)] -> String -> LookupT m b
 lookupEnv = lookup id (pure . pure) (pure <% P.lookup)
 
@@ -181,10 +194,29 @@ lookupFileT = lookupFileCommon TIO.readFile
 lookupFileTL :: String -> LookupT IO T.Text
 lookupFileTL = lookupFileCommon TLIO.readFile
 
--- With Defaults
-
-lookupEnvWithDef :: Monad m => b -> [(String, b)] -> String -> LookupT m b
-lookupEnvWithDef def = lookup id (pure . Right) (pure . (<|> Just def) <% P.lookup)
+-- there's probably some confusing way to express this in terms of @lookup@, involving bind or join
+-- | e.g.
+--
+-- @
+-- do
+--     env <- getEnvironment
+--     let shellLevel = runLookup $ lookupEnvWithDef (\x -> pure . liftME (ParseError x "Couldn't parse into integer") $ readMaybe @Int x) 30 env \"SHLVL\"
+--     pure shellLevel
+-- @
+--
+-- The type of this expression is @IO (Either (S.Set ParseError) Int)@. If you made a typo and put \"SHELVL\", then it'd return (Right 30) in IO.
+--
+-- Remember to include @pure@ in your parsing function if you're using the @Identity@ category!
+lookupEnvWithDef :: Monad m
+                 => (b -> m (Either ParseError c))
+                 -> c
+                 -> [(String, b)]
+                 -> String
+                 -> LookupT m c
+-- maybe (Just def)
+lookupEnvWithDef p def s i = LookupT $ (pure <% P.lookup) i s >>= \case
+    Nothing -> pure (Right def)
+    Just a -> BiF.first S.singleton <$> p a
 
 lookupFileCommonWithDef :: (String -> IO b) -> b -> String -> LookupT IO b
 lookupFileCommonWithDef f def = lookup id (pure . Right) (\x _ -> doesFileExist x >>= bool (pure $ Just def) (pure <$> f x)) undefined

@@ -1,4 +1,4 @@
--- | Operations that I want to merge into the ListLike package, but haven't yet (before doing that I want ListLike to be in terms of type families rather than func deps, so that both char8 bytestring and word8 bytestring can both be listlike's)
+-- | Operations that I want to merge into the <http://hackage.haskell.org/package/ListLike ListLike> package, but haven't yet (before doing that I want ListLike to be in terms of type families rather than func deps, so that both char8 bytestring and word8 bytestring can both be listlike's)
 module NicLib.List
 ( breakAtLast
 , replaceAll
@@ -21,30 +21,36 @@ import NicLib.NStdLib
 import qualified Data.List as L
 import qualified Data.ListLike as LL
 
--- | replace all occurences of old with new. Using Traversable because we're replacing elements "in-place"; we're preserving structure and type.
+-- | Replace all occurences of old with new. Using Traversable because we're replacing elements "in-place"; we're preserving structure and type.
+--
 -- cf. Foldable, which does not necessarily preserve structure.
 replaceAll :: (Eq b, Traversable t) => b -> b -> t b -> t b
 replaceAll old new = fmapDefault (bool' id (const new) (==old))
 
--- | remove an element from head, if head is that element, for ListLike
+-- | Remove an element from head, if head is that element, for ListLike
 rmTrailing :: (LL.ListLike list item, Eq item) => item -> list -> list
 rmTrailing c t = if LL.null t || LL.last t /= c then t else LL.init t
 
--- | remove an element from end, if last is that element
+-- | Remove an element from end, if last is that element
 rmLeading :: (LL.ListLike list item, Eq item) => item -> list -> list
 rmLeading x xs = if LL.null xs || LL.head xs /= x then xs else LL.tail xs
 
--- | inserts an element after every nth index
+-- | Inserts an element after every n<sup>th</sup> index
 insertPeriodically :: (LL.ListLike full item) => Int -> item -> full -> full
 insertPeriodically n i = LL.tail . fst . LL.foldl' (\(b,c) a -> (b `LL.append` if c `mod` n == 0 then LL.cons i (LL.singleton a) else LL.singleton a, succ c)) (LL.empty, 0)
 
--- | break at last seperator, e.g. breakAtLast '/' "/root/file/system" --> ("/root/file/", "system"). Nothing if seperator is not in sequence.
+-- | Break at last seperator.
+--
+-- >>> breakAtLast '/' "/root/file/system"
+-- Just ("/root/file/", "system")
+--
+-- Returns @Nothing@ if seperator is not in sequence.
 breakAtLast :: (LL.ListLike full item, Eq item) => item -> full -> Maybe (full, full)
 breakAtLast sep = bool' (const Nothing) (go LL.empty . LL.reverse) LL.null
     where
         go stack t = LL.uncons t >>= \(x,xs) -> if x == sep then Just (LL.reverse t, stack) else go (LL.cons x stack) xs
 
--- | Data.Text.breakOn generalized to ListLike's
+-- | 'Data.Text.breakOn' generalized to ListLike's
 breakOn :: (LL.ListLike full item, Eq item) => full -> full -> (full, full)
 breakOn p s
     | LL.null p = error "Data.ListLike.breakOn: empty input"
@@ -57,7 +63,7 @@ breakOn p s
                 else
                     go (acc `LL.append` (preMatch `LL.snoc` LL.head atMatch), LL.tail atMatch) -- token not yet found. keep searching through list
 
--- | Data.Text.commonPrefixes generalized to ListLike's
+-- | 'Data.Text.commonPrefixes' generalized to ListLike's
 commonPrefixes :: (LL.ListLike full item, Eq item) => full -> full -> Maybe (full, full, full)
 commonPrefixes = go LL.empty where
     go common a b =
@@ -68,7 +74,7 @@ commonPrefixes = go LL.empty where
                 if (x == y) then go (LL.snoc common x) xs ys else v
         in w <|> v -- if we leave-off (<|> v), then if a is a sublist of b or vice-versa, commonPrefixes will incorrectly return Nothing
 
--- | Data.Text.replace generalized to ListLike's
+-- | 'Data.Text.replace' generalized to ListLike's
 replace :: (LL.ListLike full item, Eq item) => full -> full -> full -> full
 replace p r s
     | LL.null p = error "Data.ListLike.replace: empty input"
@@ -80,7 +86,7 @@ replace p r s
                    | otherwise -> a `LL.append` r `LL.append` go (LL.drop plen b)
 
 
--- | Data.Text.split generalized to ListLike's
+-- | 'Data.Text.split' generalized to ListLike's
 split :: (LL.ListLike full item) => (item -> Bool) -> full -> [full]
 split p xs = case LL.break p xs of
     (a, b) ->
@@ -89,7 +95,7 @@ split p xs = case LL.break p xs of
         else if LL.null a then cont
         else    LL.cons a cont
 
--- | Data.Text.splitOn generalized to ListLike's
+-- | 'Data.Text.splitOn' generalized to ListLike's
 splitOn :: (LL.ListLike full item, Eq item) => full -> full -> [full]
 splitOn p s
     | LL.null p = error "Data.ListLike.splitOn: empty input"
@@ -103,7 +109,7 @@ splitOn p s
                 else if LL.null a then cont
                 else    LL.cons a cont
 
--- | Data.Text.chunksOf generalized to ListLike's
+-- | 'Data.Text.chunksOf' generalized to ListLike's
 chunksOf :: (LL.ListLike full item) => Int -> full -> [full]
 chunksOf 0 = const []
 chunksOf i = go
@@ -112,7 +118,7 @@ chunksOf i = go
              | otherwise = case LL.splitAt i s of
                  (a, b) -> a : go b
 
--- | Data.Text.count generalized to ListLike's
+-- | 'Data.Text.count' generalized to ListLike's
 count :: (LL.ListLike full item, Eq item) => full -> full -> Int
 count a | LL.null a = error "Data.ListLike.count: empty input"
         | otherwise = go 0
@@ -122,7 +128,7 @@ count a | LL.null a = error "Data.ListLike.count: empty input"
             (_, y) | LL.null y -> n
                    | otherwise -> go (succ n) (LL.drop alen y)
 
--- | Data.Text.intercalate generalized to ListLike's
+-- | 'Data.Text.intercalate' generalized to ListLike's
 intercalate :: (LL.ListLike full item) => full -> [full] -> full
 intercalate ins = go
     where

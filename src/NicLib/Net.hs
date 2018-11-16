@@ -1,4 +1,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
+
+-- | I've yet to really make this module useworthy. Currently it's a sandbox for developing useful functions about req.
 module NicLib.Net where
 
 -- base

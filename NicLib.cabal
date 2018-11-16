@@ -11,9 +11,9 @@ license: BSD3
 maintainer: Nicholas Chandoke <nicholas.chandoke@gmail.com>
 name: NicLib
 stability: Stable
-synopsis: Hodgepodge of functionality. The personal library of Nic Chandoke. Hopefully useful to others, too.
+synopsis: nixy's personal lib
 tested-with: GHC ==8.4.3
-version: 0.1.4
+version: 0.1.5
 
 library
   ghc-options: -Wno-type-defaults

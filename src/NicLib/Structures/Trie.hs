@@ -1,8 +1,10 @@
 -- TODO: (how) can I leverage OrderBy and algebra to make this whole implementation more elegant and faster?
 -- TODO: make easy to specify which ListLike to use, with consideration that internal functions are stack-based. Is [] always best?
 -- TODO: tries are a {-# SPECIALIZATION #-} of trees. One should never have a tree of something when a trie is permittable. Make this selection automatic.
--- | A space-effecient set of sequences whose elements permit an order; isomorphic with @Ord a => Set [a]@. Uses @Set@ and @ListLike@ under-the-hood.
+-- | A space-effecient set of sequences whose elements permit an order; isomorphic with @Ord a => Set [a]@. Uses 'Set' and 'ListLike' under-the-hood.
+--
 -- More precisely, a trie's efficiency relative to its isomorphic set varies with the extent that the set's elements share common subsequences.
+--
 -- Likely you'll want to import this module qualified
 module NicLib.Structures.Trie
 ( Trie
@@ -57,7 +59,7 @@ import qualified Prelude as Pl
 -- | Multiroot Trie stored as a set of @Trie'@s. May be @Set.empty@.
 newtype Trie val tag = Trie {getTrie :: S.Set (Trie' val tag)} deriving (Eq, Ord)
 
--- | a Stop tells that the path from root to that stop is an item in the set, e.g. c -> a -> t -> {Stop (), a -> m -> a -> r -> a -> n -> Stop ()} <-> {("cat", ()), ("catamaran", ())}
+--  A Stop tells that the path from root to that stop is an item in the set, e.g. c -> a -> t -> {Stop (), a -> m -> a -> r -> a -> n -> Stop ()} <-> {("cat", ()), ("catamaran", ())}
 -- children will never be @S.null@; the smallest a children can be is the set @S.fromList [Stop _]@. Also, @Stop@s are always the minimum element of any trie.
 -- you may tag a Stop element with any data you wish; the Stop data is data that belongs with the element stored in the set, but only belongs to that whole element altogether, not having any meaning in the mere context of an element of the sequence stored as an element of the trie; for example, you may want to store a trie of (String, Int), where the Int is associated with a string, but not any character.
 -- remember that Stops' values have no effect on the Trie's organization; they're merely tagged-on for inserting and getting items. In other words, Stop values don't affect ordering of elements, trie membership, ...or anything other than "going-with" insert & singleton, and get functions (e.g. findMin, toSet)
@@ -91,8 +93,9 @@ instance (Monoid tag, Ord a) => Monoid (Trie a tag) where
     mempty = empty -- this is Trie.empty, not Applicative.empty!
     mappend = (<>)
 
--- | first map (the one over values, not tags) must be monotonic! Be careful, as this condition cannot be checked, and behavior is undefined for non-monotonic mappings!
--- not an instance of @Bifunctor@ because this @bimap@ has a more specific type than Bifunctor's bimap; it requires that the elements being mapped over instance @Ord@.
+-- | First map (the one over values, not tags) must be monotonic! Be careful, as this condition cannot be checked, and behavior is undefined for non-monotonic mappings!
+--
+-- Not an instance of @Bifunctor@ because this @bimap@ has a more specific type than Bifunctor's bimap; it requires that the elements being mapped over instance @Ord@.
 bimap :: (Ord a, Ord b) => (a -> b) -> (c -> d) -> Trie a c -> Trie b d
 bimap f g = Trie . S.map (\case Trie' v k -> Trie' (f v) (bimap f g k); Stop stopVal -> Stop (g stopVal)) . getTrie
 
@@ -133,21 +136,21 @@ member ss = match ss >>> \(t,h) -> hasStop t && LL.length ss == length h
 notMember :: (ListLike full item, Ord item) => full -> Trie item tag -> Bool
 notMember = cT not member
 
--- | get an index's associated tag
+-- | Get an index's associated tag
 lookup :: (LL.ListLike full a, Ord a) => full -> Trie a tag -> Maybe tag
 lookup ss = match ss >>> \(t,h) -> if LL.length ss == length h then fst <$> factorStop t else Nothing
 
--- | insert item into trie if item is not already there; if item is in trie already (independent of its tag value) then trie is unaltered. Use method update to update an already existant item's tag value 
+-- | Insert item into trie if item is not already there; if item is in trie already (independent of its tag value) then trie is unaltered. Use method update to update an already existant item's tag value 
 insert :: (ListLike full item, Ord item) => full -> tag -> Trie item tag -> Trie item tag
 insert ss tag t0 = case match ss t0 of 
     (t,h) -> let lh = length h in if hasStop t && LL.length ss == lh then t0 else
         case LL.splitAt lh ss of (p1, p2) -> zip p1 (Trie $ S.union (getTrie $ singleton (p2, tag)) (getTrie t)) h
 
--- | inserts item into trie. If item is already in trie, updates its tag value
+-- | Inserts item into trie. If item is already in trie, updates its tag value
 update :: (ListLike full item, Ord item) => full -> tag -> Trie item tag -> Trie item tag
 update ss tag = match ss >>> \(t,h) -> case LL.splitAt (length h) ss of (p1, p2) -> zip p1 (Trie $ S.union (getTrie $ singleton (p2, tag)) (getTrie t)) h
 
--- | filters branches
+-- | Filters branches
 filter :: (ListLike full a, Ord a) => (full -> tag -> Bool) -> Trie a tag -> Trie a tag
 filter p = foldr (\f t b -> if p f t then insert f t b else b) empty -- I wonder if it's faster to build anew w/insert, or to delete~?
 
@@ -174,7 +177,7 @@ lookupLE :: Ord a => [a] -> Trie a -> Maybe a
 lookupLT :: Ord a => [a] -> Trie a -> Maybe a
 -}
 
--- | (A \ B, B \ A, A ∩ B) of two tries A and B. The binary "merge" function is performed on elements that are present in both tries (since we can't have duplicate elements in the result trie.) Some common examples are @curry fst@, @curry snd@, or @(,)@.
+-- | (A \\ B, B \\ A, A ∩ B) of two tries A and B. The binary "merge" function is performed on elements that are present in both tries (since we can't have duplicate elements in the result trie.) Some common examples are @curry fst@, @curry snd@, or @(,)@.
 diff :: forall a tag tag2. (Ord a) => Trie a tag -> Trie a tag -> (tag -> tag -> tag2) -> (Trie a tag, Trie a tag, Trie a tag2)
 diff a b m = foldr f (empty, b, empty) a
     where
@@ -198,11 +201,14 @@ foldl' f = go LL.empty where
            Nothing -> S.foldl' ff lump (getTrie t)
            Just (stopVal, Trie nonStops) -> S.foldl' ff (f lump acc stopVal) nonStops
 
--- | apply a function to each element of a trie, in order of its elements (e.g. traverse_ (\x _ -> print x) {("ao",()), ("hello",()), ("hi",())} will print ao, then hello, then hi)
+-- | Apply a function to each element of a trie, in order of its elements, e.g.
+--
+-- >>> traverse_ (\x _ -> print x) {("ao",()), ("hello",()), ("hi",())}
+-- prints ao, then hello, then hi
 traverse_ :: (ListLike full item, Ord item, Applicative m) => (full -> tag -> m ()) -> Trie item tag -> m ()
 traverse_ f = foldr (\x y z -> f x y *> z) (pure ())
 
--- | number of elements in the set
+-- | Number of elements in the set
 size :: forall a i tag. (Ord a, Integral i) => Trie a tag -> i
 size = foldr ((\_ _ -> (+1)) :: [a] -> tag -> i -> i) 0 -- arbitrary ListLike instance [a] a chosen to satisfy typechecker
 
@@ -219,7 +225,7 @@ mmCommon f = go LL.empty where
         Stop stopVal -> (LL.reverse h, stopVal)
         Trie' v k -> go (LL.cons v h) k
 
--- | you'll probably need to specify the type of ListLike, e.g. (toSet trie :: S.Set String)
+-- | You'll probably need to specify the type of ListLike, e.g. (toSet trie :: Set String)
 toSet :: (ListLike full a, Ord a, Ord full) => Trie a tag -> S.Set (OrderBy full tag)
 toSet = foldr (curry $ S.insert . OrderBy) S.empty
 
@@ -246,7 +252,7 @@ instance Ord a => Ord (Trie' a tag) where
 -- (\s t -> (\(x,y) -> zip s x y) (match s t)) z a == a, where z is any string and a is any Trie
 
 -- TODO: match is (at least one of) the most expensive and elementary functions in Trie. Many methods depend on its output ((t,h) -> ...); make this combinatory.
--- | helper function. Searches through a trie for branch matching longest substring of given sequence. Returns (matched trie t, stack of tries ancestors of t \ t)
+-- helper function. Searches through a trie for branch matching longest substring of given sequence. Returns (matched trie t, stack of tries ancestors of t \ t)
 match :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> (t, [t])
 match ss t = go ss t [] where
     go :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> [t] -> (t, [t])
@@ -255,7 +261,7 @@ match ss t = go ss t [] where
         x <- setFind ((c==) . val) (maybe t (getTrie . snd) (factorStop $ Trie t))
         pure (x,cs)
 
--- | inserts a sub-Trie' into a larger Trie, using a stack whose head is childmost Trie
+-- inserts a sub-Trie' into a larger Trie, using a stack whose head is childmost Trie
 -- first parameter gives the values of Trie's for childless nodes in the history stack
 zip :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> [t] -> t
 zip (LL.reverse -> s) = fst . flip (LL.foldl' (\(t, (h:hs)) c -> (Trie $ S.insert (Trie' c t) (getTrie h), hs))) s <% (,) -- s is guaranteed to be at least as long as h, but in practice should always be the same length. Thus zip should throw any index out of bounds error, as it indicates a logic error in whatever method uses zip
