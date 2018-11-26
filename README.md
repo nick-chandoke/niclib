@@ -15,3 +15,7 @@ I expect that I'll be the only person to actually do a build NicLib, but if you 
 I write NicLib to account for lacking functionality that I commonly use. I'm more than happy to discover that someone else has done a better job and already put the package on stackage or hackage. My goal is not to compete with others or write great code just for accolades; I merely wish for things to be possible, easy, and elegant, even if I need to make it so &ndash; all the better if I don't! If you know of a package that's been around (and has probably been tested or optimized better than mine) that has the same functionality found here in NicLib, please open an Issue in Github about it, so that I may remove & deprecate the function from NicLib in favor of the suggested one.
 
 If NStdLib doesn't have what you're looking for, have a look at <http://hackage.haskell.org/packages/#cat:Control>; these are the kinds of functions I find myself writing.
+
+---
+
+Also, please, if you see any bad design patterns or programming practices, open an issue about it! The last thing I want to do is put code out that some people may learn bad practices from!

@@ -71,7 +71,7 @@ infixl 3 <||>
 
 -- | Ternary if-then-else operators
 --
--- So Java/C[++]'s bool ? x : y becomes bool ? x ↔ y in Haskell
+-- So Java/C[++]'s @bool ? x : y@ becomes @bool ? x ↔ y@ in Haskell
 --
 -- (I assume most Haskellers would ask why create such operators. Well, I just love the ternary operator, and after switching to Haskell, I felt something lacking...so don't judge please.)
 infixr 1 ?
@@ -183,7 +183,10 @@ morphism46 :: Applicative f => (f c -> d) -> (a -> f b) -> (b -> b -> c) -> a ->
 morphism46 wrap unwrap g = wrap <% on (liftA2 g) unwrap
 
 -- TODO: can use Ed Kmett's semigroupoid library's Iso type <http://hackage.haskell.org/package/semigroupoids-5.3.1/docs/Data-Isomorphism.html> for this?
--- | Homomorphism/isomorphism type family. Use with TypeApplications, e.g. @as \@[Int] 4@ --> @[4]@, @as \@Char 65@ --> @'A'@
+-- | Homomorphism/isomorphism type family. Use with @-XTypeApplications@, e.g.
+--
+-- >>> as @Char 65
+-- 'A'
 --
 -- For any two instances A and B
 --

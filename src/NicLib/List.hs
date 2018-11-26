@@ -39,16 +39,35 @@ rmLeading x xs = if LL.null xs || LL.head xs /= x then xs else LL.tail xs
 insertPeriodically :: (LL.ListLike full item) => Int -> item -> full -> full
 insertPeriodically n i = LL.tail . fst . LL.foldl' (\(b,c) a -> (b `LL.append` if c `mod` n == 0 then LL.cons i (LL.singleton a) else LL.singleton a, succ c)) (LL.empty, 0)
 
--- | Break at last seperator.
+-- | Break at last separator.
 --
 -- >>> breakAtLast '/' "/root/file/system"
--- Just ("/root/file/", "system")
+-- ("/root/file/", "system")
 --
--- Returns @Nothing@ if seperator is not in sequence.
-breakAtLast :: (LL.ListLike full item, Eq item) => item -> full -> Maybe (full, full)
-breakAtLast sep = bool' (const Nothing) (go LL.empty . LL.reverse) LL.null
+-- >>> breakAtLast '/' "./rel/file/path"
+-- ("./rel/file/", "path")
+--
+-- >>> breakAtLast '.' "file.ext"
+-- ("file.", "ext")
+--
+-- You may use @\case ("", _) -> ⋯" to match against "there's no separator:"
+--
+-- >>> breakAtLast ';' "noseparator"
+-- ("", "noseparator")
+--
+-- >>> breakAtLast '/' "dirpath/"
+-- ("dirpath/", "")
+--
+-- Passing an empty list, regardless of separator, returns @mempty@:
+--
+-- >>> breakAtLast undefined ""
+-- ("", "")
+breakAtLast :: (LL.ListLike full item, Eq item) => item -> full -> (full, full)
+breakAtLast sep = go . (LL.empty,)
     where
-        go stack t = LL.uncons t >>= \(x,xs) -> if x == sep then Just (LL.reverse t, stack) else go (LL.cons x stack) xs
+        go z@(x, y) = case LL.break (==sep) y of
+            (a, b) | LL.null b -> z
+                   | otherwise -> go (x <> LL.snoc a sep, LL.tail b)
 
 -- | 'Data.Text.breakOn' generalized to ListLike's
 breakOn :: (LL.ListLike full item, Eq item) => full -> full -> (full, full)
@@ -88,12 +107,14 @@ replace p r s
 
 -- | 'Data.Text.split' generalized to ListLike's
 split :: (LL.ListLike full item) => (item -> Bool) -> full -> [full]
-split p xs = case LL.break p xs of
-    (a, b) ->
-        let cont = split p (LL.tail b) in
-        if      LL.null b then LL.singleton xs
-        else if LL.null a then cont
-        else    LL.cons a cont
+split p = go
+    where
+        go xs = case LL.break p xs of
+            (a, b) ->
+                let cont = go (LL.tail b) in
+                if      LL.null b then LL.singleton xs
+                else if LL.null a then cont
+                else    LL.cons a cont
 
 -- | 'Data.Text.splitOn' generalized to ListLike's
 splitOn :: (LL.ListLike full item, Eq item) => full -> full -> [full]

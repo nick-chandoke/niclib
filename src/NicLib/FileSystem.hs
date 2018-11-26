@@ -28,6 +28,7 @@ module NicLib.FileSystem
 , realPath
 ) where
 
+import Control.Exception.Safe (onException)
 import Control.Applicative
 import Control.Arrow ((&&&))
 import Control.Monad (guard)
@@ -102,13 +103,13 @@ mvt destDir@(FilePath -> dd) files = liftIO $ do
 nextDuplicateFileName :: String -> String
 nextDuplicateFileName [] = mempty
 nextDuplicateFileName a = case breakAtLast '.' a of
-    Nothing -> f a
-    Just (b, ext) -> f (init b) ++ '.':ext
+    ("", _) -> f a
+    (b, ext) -> f (init b) ++ '.':ext
     where
         f c = case breakAtLast '-' c of
-            Nothing -> c ++ "-1"
-            Just (_, "") -> c ++ "1"
-            Just (d, x) -> case readMaybe x :: Maybe Int of
+            ("", _) -> c ++ "-1"
+            (_, "") -> c ++ "1"
+            (d, x) -> case readMaybe x :: Maybe Int of
                 Nothing -> d
                 Just n -> d ++ show (succ n)
 
@@ -122,8 +123,8 @@ pathOrNextDuplicate p = bool p (nextDuplicateFileName p) <$> D.doesPathExist p
 fileExtension :: String -> String
 fileExtension s = if '.' `elem` s then ('.':) . reverse . takeWhile (/='.') $ reverse s else empty
 
-mkdir :: (MonadIO m, MonadCatch m) => String -> m ()
-mkdir dir = (liftIO $ D.createDirectoryIfMissing True dir) `orThrow` "couldn't create directory"
+mkdir :: MonadIO m => String -> m ()
+mkdir dir = liftIO $ D.createDirectoryIfMissing True dir
 
 -- | Equivalent to @mkdir -p dir && cd dir@ in bash.
 mkcd :: (MonadIO m, MonadCatch m) => String -> m ()
@@ -133,11 +134,17 @@ mkcd = mkdir &&& cd >*> (*>)
 --
 -- Same order as 'cp': @ln src (Just dest)@ will create a link called dest that points to @src@.
 --
+-- __It is not assumed that @src@ exists!__ You must check this yourself.
+--
+-- Also, it's recommended that you use 'System.Directory.makeAbsolute' on @src@ if you're linking to a target in a different directory!
+--
+-- For instance, @ln "file" (Just "../ln-to-file")@ will successfully create a link called @ln-to-file@ in the parent directory that points to "file" which, by omission of an absolute path, assumes the "current directory," i.e. the parent directory, and thus you would be creating a link to "../file", despite the /actual/ destination being "./file"
+--
 -- @ln src Nothing@ will create a link with the basename of @src@ in the working directory.
 ln :: (MonadIO m, MonadCatch m) => String -> Maybe String -> m ()
 ln src = withNewDir (cT liftIO createSymbolicLink) src . \case
     Nothing -> "./" ++ basename src -- (1) TODO: make work for non-POSIX pathnames
-    Just d -> isJust (breakAtLast pathSeparator d) ? d ↔ "./" ++ d -- (1) here too
+    Just d -> case breakAtLast pathSeparator d of ("", _) -> "./" ++ d; _ -> d -- (1) here too
 -- note: we add "./" because, for some reason, an exception is thrown if dest is a relative directory: "changeWorkingDirectory: does not exist (No such file or directory)". We can easily get around this error by prefixing the destination path with "./"
 
 -- | Just easier to read than 'D.setCurrentDirectory' (and lifted for convenience)
@@ -148,11 +155,11 @@ cd dir = liftIO $ D.setCurrentDirectory dir
 --
 -- Please note that the directory name returned (if a directory is given) will have a trailing pathSeparator
 --
--- In other words, when sensible (i.e. pathname has a directory and filename,) @pathname = uncurry ListLike.append (dirAndBase pathname)@
+-- In other words, when sensible (i.e. pathname has a directory and filename,)
+--
+-- prop> uncurry ListLike.append . dirAndBase = id
 dirAndBase :: ListLike full Char => full -> (full, full)
-dirAndBase s | LL.null s = (LL.empty, LL.empty)
-             | LL.last s == pathSeparator = (s, LL.empty)
-             | otherwise = fromMaybe (LL.empty, s) $ breakAtLast pathSeparator s
+dirAndBase = breakAtLast pathSeparator
 
 -- | Longest parent segment of filepath (i.e. from left side), with trailing path separator removed, if any
 dirname :: ListLike full Char => full -> full
@@ -210,7 +217,7 @@ dirsame = undefined
 -- >>> fileEq file1 =<< readSymbolicLink link1
 -- True
 fileEq :: String -> String -> IO Bool
-fileEq a b = do
+fileEq a b = do -- TODO: make exception safe!
     h1 <- openBinaryFile a ReadMode
     h2 <- openBinaryFile b ReadMode
     e <- liftA2 (/=) (hGetContents h1) (hGetContents h2)

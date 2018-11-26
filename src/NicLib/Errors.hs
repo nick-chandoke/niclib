@@ -1,11 +1,14 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- TODO: rewrite in terms of Capabilities <https://github.com/tweag/capability> (will push niclib to requiring GHC 8.6, however)
---   or use exceptions instead of error-logging monads. I'll have to consider the roles/uses of this module in order to decide such things.
+-- TODO: link to nixys-server-box haddocks when available on nicholaschandoke.me
+-- TODO: rewrite in terms of Capabilities? <https://github.com/tweag/capability> (will push niclib to requiring GHC 8.6, however)
 -- AccumT's are used mostly as WriterT's herein; you'll see a lot of things in the vein of runAccumT (add ... >> ...) mempty
--- | Handle logging, filtering for, and printing, errors.
+-- | Handle logging, filtering for, and printing of warnings and short-circuiters (/neither <https://wiki.haskell.org/Error_vs._Exception errors nor exceptions>/). The main object of this module is 'BugT', which collects warnings and short-circuits on errors. BugT can be used for things that aren't strictly errors nor warnings; see nixys-server-box for an example.
 --
--- Please note that, especially for multi-threaded programs, you should /not/ use error-logging monads to catch exceptions! If you aren't familiar with this, you can easily find material about it online. This being said, I've found use for BugT in server request routing, to handle non-erroroneous exceptional behaviors. (read https://wiki.haskell.org/Error_vs._Exception if that's confusing.) Keep in mind that "errors" are still useful in pure code, and that "error" monads are better called "exit-early" or "short-circuit" monads, since that's their literal behavior, regardless of the purpose!
+-- === Exceptions/Disclaimer
+--
+-- You /can/ use this module for exception handling, e.g. accounting for expected 'IOError''s e.g. file not found or permissions errors. Anything goes in non-production personal scripts. However, for production code, if you aren't already familiar with exception handling, please read <https://www.fpcomplete.com/blog/2016/11/exceptions-best-practices-haskell Snoyman's FP Complete blog post> to get started.
+-- @Errors@ sometimes blurs the line between exception handling and BugT-like behavior, for instance in its use of @MonadThrow@. Some functions herein can be used for either BugT stuff or exception handling, or both.
 module NicLib.Errors
 ( BugT
 , bugT
@@ -14,20 +17,17 @@ module NicLib.Errors
 , err
 , getWarning
 , mtell
-, orError
-, orLog
-, orThrow
+, describeIOError
 , toError
 , toWarning
 , warn
-, with -- for some reason I get a parse error when I tried naming it 'by'
 , liftME
 , withBugAccum
 -- * Printing functions
 , dumpWarn
+, toStderr
 , stderrOnFail
 , stderrOnFailAndExit
-, toStderr
 ) where
 
 import Control.Arrow (second)
@@ -89,7 +89,7 @@ withBugAccum f = mapBugAccum (bugT . pure . second f)
 mapBugAccum :: (Monad m, Monoid w, Monoid w') => ((Either e a, w) -> BugT e w' m a) -> BugT e w m a -> BugT e w' m a
 mapBugAccum f = bugT . morphism240 runBugT f runBugT
 
--- | Short-circuit computation because it cannot continue further.
+-- | Short-circuit computation because it cannot continue further. Basically 'throwE' but with a better name, and works for Applicatives.
 --
 -- Like @pure@, but for Left's rather than Right's.
 --
@@ -123,41 +123,17 @@ toError = bugT . morphism240 (flip runAccumT mempty) (\(a, e) -> if e == mempty 
 toWarning :: (Monoid w, Monad m) => ExceptT w m a -> BugT e w m (Maybe a)
 toWarning = lift . ((\case Left e -> add e >> pure Nothing; Right x -> pure $ Just x) <=< lift . runExceptT)
 
--- | On exception catch, do something with both a user-given description of the error, and a detailed description of the problem. I'm not sure whether to use 'System.IO.Error.userError', @mkIOError@, and @annotateIOError@, to return an @IOError@.
---
--- Use with the @with@ function (or if you're using @Lucid@ man-up and use @$@ instead.) Example:
---
--- @liftIO (readFile "not here!") `orLog` "Error reading file 'nothere'!" `with` err@
---
--- One may use @err@ or any method of your preference that works. Remember that the function you supply via @with@ must instance @MonadCatch@! Thus, for instance, @warn@ will not work, unless someone instances @MonadCatch m => MonadCatch (AccumT w m)@.
---
--- These error descriptions are better than nothing, but are quite unhelpful (e.g. "filesystem object already exists" - if dealing with multiple files, you don't know which one!)
---
--- Please always include descriptive error messages that specify concrete values (e.g. song.mp3 rather than "file" or "a file") that pertain to the nature of the program you're writing. If you fail to account for something, these extra messages may be helpful
-orLog :: (MonadCatch m) => m a -> Text -> (Text -> m a) -> m a
-action `orLog` msg = \l -> catch action $ \e ->
-    let desc = if | isPermissionError e    -> " (permission error)" -- TODO: check UID against owner's UID of resource we're trying to access; find exactly where and what the permission (or owner) mismatch is
-                  | isAlreadyExistsError e -> " (filesystem object already exists)"
-                  | isDoesNotExistError e  -> " (filesystem object doesn't exist)"
-                  | isAlreadyInUseError e  -> " (filesystem object already in use)"
-                  | isFullError e          -> " (device we're trying to write to is already full)"
-                  | isEOFError e           -> " (end of file reached too early (this is a programming error))"
-                  | isIllegalOperation e   -> " (\"illegal operation\")"
-                  | otherwise              -> ""
-    in l $ msg <> desc
-
--- | @orError = orLog with err@
-orError :: (MonadCatch m) => ExceptT Text m a -> Text -> ExceptT Text m a
-orError = orLog %> ($err)
-
--- | Calls 'Control.Exception.Safe.throwString' on an error
--- e.g. @mzero \`orThrow\` "mzero error"@
-orThrow :: MonadCatch m => m a -> Text -> m a
-orThrow = orLog %> flip with (throwString . T'.unpack)
-
--- | @with = $@.
-with :: (a -> b) -> a -> b
-with = ($)
+-- | Get a synopsis of an @IOError@. For example, converts @isPermissionError@ to "Permission error".
+describeIOError :: IOError -> String
+describeIOError e = 
+    if | isPermissionError e    -> "Permission error"
+       | isAlreadyExistsError e -> "Filesystem object already exists"
+       | isDoesNotExistError e  -> "Filesystem object doesn't exist"
+       | isAlreadyInUseError e  -> "Filesystem object already in use"
+       | isFullError e          -> "Device we're trying to write to is already full"
+       | isEOFError e           -> "End of file reached too early"
+       | isIllegalOperation e   -> "Illegal operation"
+       | otherwise              -> "Unknown IO Error"
 
 -- | Log warning messages. If the logging function is successful, clear the calling monad's buffer and return the output of the logger.
 --

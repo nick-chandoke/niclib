@@ -65,6 +65,7 @@ module Control.Monad.Trans.Lookup
 , lookupFileTL
 -- * Common Lookup Functions With Defaults
 , lookupEnvWithDef
+, lookupEnvWithReadDef
 , lookupFileWithDef
 , lookupFileBSWithDef
 , lookupFileBSLWithDef
@@ -97,7 +98,9 @@ import qualified Data.Text.Lazy.IO as TLIO
 import qualified Data.Text as T'
 import qualified Data.Text.Lazy as T
 
-import NicLib.NStdLib ((<%), morphism239) -- NicLib
+-- NicLib
+import NicLib.NStdLib ((<%), morphism239, readMaybe)
+import NicLib.Errors (liftME)
 
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
@@ -154,11 +157,9 @@ instance Applicative m => Applicative (LookupT m) where
 --             -> LookupT m a
 --             -> m (Either (Set ParseError) x)
 instance Monad m => Monad (LookupT m) where
-    -- | Short-circuiting like @Either@; does not accumulate a set like the Applicative instance does.
-    -- So why instance Monad? Only so that I can instance @MonadIO@, which I needed for some functions.
     l >>= f = LookupT $ morphism239 runLookupT g runLookupT l where
         g = \case
-            Left  s -> LookupT $ pure (Left s)
+            Left  s -> LookupT $ (Left . either (s<>) (const s)) <$> runLookupT (f undefined)
             Right a -> f a
 
 instance MonadIO m => MonadIO (LookupT m) where
@@ -217,6 +218,11 @@ lookupEnvWithDef :: Monad m
 lookupEnvWithDef p def s i = LookupT $ (pure <% P.lookup) i s >>= \case
     Nothing -> pure (Right def)
     Just a -> BiF.first S.singleton <$> p a
+
+-- TODO: abstract-away read and env, for easy combination of read (env, noread), (env, read), (notenv, read), (notenv, notread)
+-- | @lookupEnvWithDef@, but parses to some @Read@
+lookupEnvWithReadDef :: (Read i, Monad m) => i -> [(String, String)] -> String -> LookupT m i
+lookupEnvWithReadDef = lookupEnvWithDef (\s -> pure . liftME (ParseError s "Can't parse into an integer.") $ readMaybe s)
 
 lookupFileCommonWithDef :: (String -> IO b) -> b -> String -> LookupT IO b
 lookupFileCommonWithDef f def = lookup id (pure . Right) (\x _ -> doesFileExist x >>= bool (pure $ Just def) (pure <$> f x)) undefined
