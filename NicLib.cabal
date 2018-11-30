@@ -68,6 +68,7 @@ library
       DeriveGeneric,
       FlexibleContexts,
       FlexibleInstances,
+      GADTs
       GeneralizedNewtypeDeriving,
       LambdaCase,
       MonadComprehensions,
