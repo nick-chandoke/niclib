@@ -273,7 +273,10 @@ infixr 2 %>
 --
 -- @(==) = foldBins (&&) (==) True [requestMethod, rawPathInfo, rawQueryString] :: Request -> Request -> Bool@
 --
--- To demonstrate short-circuiting: @foldBins (||) (==) False [Left . fst, undefined] (4, undefined) (4, undefined)@ --> ⊥
+-- To demonstrate short-circuiting:
+--
+-- >>> foldBins (||) (==) False [Left . fst, undefined] (4, undefined) (4, undefined)
+-- ⊥
 --
 -- If any of the @undefined@'s are there, the whole computation bottoms-out.
 foldBins :: Foldable t => (c -> b1 -> c) -> (b2 -> b2 -> b1) -> c -> t (a -> b2) -> a -> a -> c

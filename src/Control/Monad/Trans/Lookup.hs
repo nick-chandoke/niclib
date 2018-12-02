@@ -55,6 +55,8 @@ module Control.Monad.Trans.Lookup
 , lookup
 , ParseError (..)
 -- * Common Lookup Functions
+, lookupFind
+, lookupFindDesperate
 , lookupEnv
 , lookupFile
 , lookupFileBS
@@ -78,7 +80,9 @@ module Control.Monad.Trans.Lookup
 -- base
 import Control.Applicative
 import Data.Bool (bool)
+import Data.Foldable (find)
 import Data.Functor.Identity
+import Data.Monoid (Alt(..))
 import Prelude hiding (lookup, Applicative(..))
 import System.Directory (doesFileExist)
 import qualified Data.Bifunctor as BiF
@@ -99,11 +103,13 @@ import qualified Data.Text as T'
 import qualified Data.Text.Lazy as T
 
 -- NicLib
-import NicLib.NStdLib ((<%), morphism239, readMaybe)
+import NicLib.NStdLib ((<%), morphism239, readMaybe, findM)
 import NicLib.Errors (liftME)
 
+-- transformers
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
+import Control.Monad.Trans.Maybe
 
 newtype LookupT m a = LookupT { runLookupT :: m (Either (S.Set ParseError) a) } deriving Functor
 type Lookup a = LookupT Identity a
@@ -131,7 +137,7 @@ instance Ord ParseError where
 
 -- | The primary way to create a @LookupT@ object
 -- Remember that you can provide default values by using @\<|\> defaultValue@ in the lookup function (the 3rd parameter)
-lookup :: (Monad m, Show i)
+lookup :: Monad m
        => (i -> String) -- ^ for collecting identifiers as error output strings
        -> (a -> m (Either ParseError b)) -- ^ function that parses a looked-up value into a final value (e.g. @read \@Int@)
        -> (i -> s -> m (Maybe a)) -- ^ the lookup function (e.g. @\k -> Identity $ Prelude.lookup k@, or @\k -> Identity . Map.lookup k@, or @\f -> doesFileExist f >>= bool (pure Nothing) (readFile f)@)
@@ -168,31 +174,82 @@ instance MonadIO m => MonadIO (LookupT m) where
 instance MonadTrans LookupT where
     lift = LookupT . fmap pure
 
+-- | 'lookup' based around 'findM'
+--
+-- Find the first item in a Foldable whose 2nd letter is 'o'; then try to parse its 3rd character to an int:
+--
+-- @
+-- let var = "somevar"
+--     lkupFn = runLookup . lookupFind
+--         var
+--         (pure . liftME (ParseError var "Couldn't parse to int") . readMaybe @Int . pure . (!!2))
+--         (pure . (=='o') . (!!1))
+--         . words
+-- @
+--
+-- >>> lkupFn "Here are many wo4ds"
+-- Right 4
+--
+-- >>> lkupFn "Here are some wo4ds"
+-- Left (fromList [ParseError {varName = "somevar", cause = "Couldn't parse to int"}])
+--
+-- >>> lkupFn "Here are many things"
+-- Left (fromList [Undefined {varName = "somevar"}])
+--
+-- Note that inserting "some" causes failure, despite "wo4ds" being a valid candidate. To continue searching until parse matches, use 'lookupFindDesperate'.
+lookupFind :: (Monad m, Foldable t)
+            => String -- ^ variable name to be displayed in error messages
+            -> (i -> m (Either ParseError b)) -- ^ parsing function
+            -> (i -> m Bool) -- ^ predicate to pass to find
+            -> t i -- ^ list to search through
+            -> LookupT m b
+lookupFind str parse predicate xs = lookup (const str) parse (\i s -> findM predicate s) xs undefined
+
+-- God only knows why, but using NicLib.foldMapM kept getting the following error in GHCi:
+-- "No instance for (Control.Monad.Trans.Error.Error ParseError) arising from a use of ‘foldMapM'"
+-- So it's MaybeT to the rescue!?
+-- | Like 'lookupFind', but searches through failed-parsing-elements, returning on the first element matching both predicate /and/ successfully parsing, if any such element exists.
+--
+-- Thus if @lookupFindDesperate@ returns a @ParseError@, it must be of the @Undefined@ constructor. Be careful when using this in your logic, as saying that "no satisfactory & parsable object could be found" means the same as "undefined" can be misleading.
+--
+-- Continuing where the example from 'lookupFind' left-off, if, in the definition of lkupFn, we replace lookupFind with lookupFindDesperate,
+--
+-- >>> lkupFn "Here are some wo4ds"
+-- Right 4
+lookupFindDesperate :: (Monad m, Foldable t)
+                    => String -- ^ variable name to be displayed in error messages
+                    -> (i -> m (Either ParseError b)) -- ^ parsing function
+                    -> (i -> m Bool) -- ^ predicate to pass to 'findM'
+                    -> t i -- ^ list to search through
+                    -> LookupT m b
+lookupFindDesperate str parse predicate = LookupT . fmap (maybe (Left . S.singleton $ Undefined str) Right) . runMaybeT . getAlt
+    . foldMap (\i -> Alt $ lift (predicate i) >>= MaybeT . bool (pure Nothing) (either (const Nothing) Just <$> parse i))
+
 lookupEnv :: Monad m => [(String, b)] -> String -> LookupT m b
 lookupEnv = lookup id (pure . pure) (pure <% P.lookup)
 
 lookupFileCommon :: (String -> IO b) -> String -> LookupT IO b
 lookupFileCommon f = lookup id (pure . pure) (\x _ -> doesFileExist x >>= bool (pure Nothing) (pure <$> f x)) undefined
 
-lookupFile :: String -> LookupT IO String
+lookupFile :: FilePath -> LookupT IO String
 lookupFile = lookupFileCommon readFile
 
-lookupFileBS :: String -> LookupT IO BS'.ByteString
+lookupFileBS :: FilePath -> LookupT IO BS'.ByteString
 lookupFileBS = lookupFileCommon BS'.readFile
 
-lookupFileBSL :: String -> LookupT IO BS.ByteString
+lookupFileBSL :: FilePath -> LookupT IO BS.ByteString
 lookupFileBSL = lookupFileCommon BS.readFile
 
-lookupFileBSC :: String -> LookupT IO BSC'.ByteString
+lookupFileBSC :: FilePath -> LookupT IO BSC'.ByteString
 lookupFileBSC = lookupFileCommon BSC'.readFile
 
-lookupFileBSLC :: String -> LookupT IO BSC.ByteString
+lookupFileBSLC :: FilePath -> LookupT IO BSC.ByteString
 lookupFileBSLC = lookupFileCommon BSC.readFile
 
-lookupFileT :: String -> LookupT IO T'.Text
+lookupFileT :: FilePath -> LookupT IO T'.Text
 lookupFileT = lookupFileCommon TIO.readFile
 
-lookupFileTL :: String -> LookupT IO T.Text
+lookupFileTL :: FilePath -> LookupT IO T.Text
 lookupFileTL = lookupFileCommon TLIO.readFile
 
 -- there's probably some confusing way to express this in terms of @lookup@, involving bind or join
@@ -205,7 +262,7 @@ lookupFileTL = lookupFileCommon TLIO.readFile
 --     pure shellLevel
 -- @
 --
--- The type of this expression is @IO (Either (S.Set ParseError) Int)@. If you made a typo and put \"SHELVL\", then it'd return (Right 30) in IO.
+-- The type of this expression is @IO (Either (S.Set ParseError) Int)@. If you made a typo and put \"SHELVL\", then it'd return @Right 30@ in IO.
 --
 -- Remember to include @pure@ in your parsing function if you're using the @Identity@ category!
 lookupEnvWithDef :: Monad m
@@ -227,23 +284,23 @@ lookupEnvWithReadDef = lookupEnvWithDef (\s -> pure . liftME (ParseError s "Can'
 lookupFileCommonWithDef :: (String -> IO b) -> b -> String -> LookupT IO b
 lookupFileCommonWithDef f def = lookup id (pure . Right) (\x _ -> doesFileExist x >>= bool (pure $ Just def) (pure <$> f x)) undefined
 
-lookupFileWithDef :: String -> String -> LookupT IO String
+lookupFileWithDef :: String -> FilePath -> LookupT IO String
 lookupFileWithDef = lookupFileCommonWithDef readFile
 
-lookupFileBSWithDef :: BS'.ByteString -> String -> LookupT IO BS'.ByteString
+lookupFileBSWithDef :: BS'.ByteString -> FilePath -> LookupT IO BS'.ByteString
 lookupFileBSWithDef = lookupFileCommonWithDef BS'.readFile
 
-lookupFileBSLWithDef :: BS.ByteString -> String -> LookupT IO BS.ByteString
+lookupFileBSLWithDef :: BS.ByteString -> FilePath -> LookupT IO BS.ByteString
 lookupFileBSLWithDef = lookupFileCommonWithDef BS.readFile
 
-lookupFileBSCWithDef :: BSC'.ByteString -> String -> LookupT IO BSC'.ByteString
+lookupFileBSCWithDef :: BSC'.ByteString -> FilePath -> LookupT IO BSC'.ByteString
 lookupFileBSCWithDef = lookupFileCommonWithDef BSC'.readFile
 
-lookupFileBSLCWithDef :: BSC.ByteString -> String -> LookupT IO BSC.ByteString
+lookupFileBSLCWithDef :: BSC.ByteString -> FilePath -> LookupT IO BSC.ByteString
 lookupFileBSLCWithDef = lookupFileCommonWithDef BSC.readFile
 
-lookupFileTWithDef :: T'.Text -> String -> LookupT IO T'.Text
+lookupFileTWithDef :: T'.Text -> FilePath -> LookupT IO T'.Text
 lookupFileTWithDef = lookupFileCommonWithDef TIO.readFile
 
-lookupFileTLWithDef :: T.Text -> String -> LookupT IO T.Text
+lookupFileTLWithDef :: T.Text -> FilePath -> LookupT IO T.Text
 lookupFileTLWithDef = lookupFileCommonWithDef TLIO.readFile

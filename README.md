@@ -19,3 +19,5 @@ If NStdLib doesn't have what you're looking for, have a look at <http://hackage.
 ---
 
 Also, please, if you see any bad design patterns or programming practices, open an issue about it! The last thing I want to do is put code out that some people may learn bad practices from!
+
+And of course, if you want any functions to be generalized, just let me know, again via either opening an Issue or emailing me.

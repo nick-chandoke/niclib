@@ -35,7 +35,7 @@ rmTrailing c t = if LL.null t || LL.last t /= c then t else LL.init t
 rmLeading :: (LL.ListLike list item, Eq item) => item -> list -> list
 rmLeading x xs = if LL.null xs || LL.head xs /= x then xs else LL.tail xs
 
--- | Inserts an element after every n<sup>th</sup> index
+-- | Inserts an element after every nth index
 insertPeriodically :: (LL.ListLike full item) => Int -> item -> full -> full
 insertPeriodically n i = LL.tail . fst . LL.foldl' (\(b,c) a -> (b `LL.append` if c `mod` n == 0 then LL.cons i (LL.singleton a) else LL.singleton a, succ c)) (LL.empty, 0)
 
