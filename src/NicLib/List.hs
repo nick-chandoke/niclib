@@ -50,7 +50,7 @@ insertPeriodically n i = LL.tail . fst . LL.foldl' (\(b,c) a -> (b `LL.append` i
 -- >>> breakAtLast '.' "file.ext"
 -- ("file.", "ext")
 --
--- You may use @\case ("", _) -> ⋯" to match against "there's no separator:"
+-- You may use @\case ("", _) -> ⋯@ to match against "there's no separator:"
 --
 -- >>> breakAtLast ';' "noseparator"
 -- ("", "noseparator")

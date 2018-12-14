@@ -42,6 +42,7 @@ library
       directory,
       exceptions,
       filepath,
+      fgl,
       ghc-prim,
 --    http-types,
 --    http-conduit,

@@ -1,52 +1,57 @@
 module NicLib.Tree
-( findByPath
-, pruneTree
+( Rel(..)
+  -- * Filters
+, findByPath
 , matchTree
 , selectBranches
+, pruneTree
+-- * Utilities
+, putInTree
+, toGraph
+-- * Morphisms from Tree
+, toPaths
+, showIndented
+-- * Morphisms to Tree
+-- , fromPaths
 , readIndentedGeneral
 , readIndentedText
 , readIndentedTextLazy
--- * DEPRECATED
-, DoubleTree
-, doubleTree
 ) where
 
+-- base
 import Control.Applicative (empty)
 import Control.Arrow ((***), second)
+import Control.Monad (guard)
 import Data.Char (isSpace)
 import Data.Foldable
-import Data.Graph -- containers
 import Data.List (uncons)
 import Data.Maybe (maybeToList)
+import Data.Semigroup (mtimesDefault)
+import Data.List.NonEmpty (NonEmpty(..)) -- v4.9.0.0+
+import qualified Data.List.NonEmpty as NE
+
+-- containers
 import Data.Sequence (Seq)
 import Data.Tree
+import qualified Data.Set as S
+import qualified Data.Map.Lazy as M
+
+-- NicLib
 import NicLib.Errors (liftME)
 import NicLib.NStdLib (bool')
-import qualified Data.Bifunctor as BiF
-import qualified Data.ListLike as LL
+
+-- misc.
+import qualified Data.Bifunctor as BiF -- bifunctors
+import qualified Data.ListLike as LL -- ListLike
+
+-- text
 import qualified Data.Text as T'
 import qualified Data.Text.Lazy as T
 
-{-
+-- fgl
+import Data.Graph.Inductive.Graph hiding (empty)
+
 data Rel = Child | Sibling | Parent deriving (Show, Eq, Ord)
-instance As (Graph Rel a) where
-    type To (Graph a) = Tree a
-    as = 
--}
-
--- TODO: deprecate in favor of as @(Graph a) (see above)
--- | a Tree (Tree a, a) allows all the Functor, Traversable &c instances for Tree. DoubleTree is isomorphic with the type (Tree a, a), however; we can traverse up the tree by recursively using the first element (parent tree) of the tuple, and so navigate the tree completely. I have DoubleTree as a Tree around the tuple simply because it allows all the functionality that the Tree module provides. I could easily derive similar or parallel instances or methods for the (Tree a, a) type, but currently I have no need.
-type DoubleTree a = Tree (Tree a, a) -- doubly-linked Tree; each child/node has a reference to its parent
-
--- | Doubly-links a tree, so that each child tree carries a reference to its parent
---
--- The first parameter is a dummy value for the root node, and is used in recursion for all other nodes
--- useful in filters: ffilter (\(parent, value) -> ...) (doubleTree dummy tree); remember that Tree is a Foldable, and the 2-tuple (Tree a, a) is the type of the argument to ffilter
-doubleTree :: a -> Tree a -> DoubleTree a
-doubleTree pv p@(Node v children) = Node (Node pv [], v) (dt p <$> children)
-    where 
-        dt :: Tree a -> Tree a -> Tree (Tree a, a)
-        dt parent (Node v children) = Node (parent, v) (dt parent <$> children)
 
 -- | Returns branches matching the ordered list of predicates.
 --
@@ -75,6 +80,10 @@ findByPath (p:ps) (Node {rootLabel, subForest})
 pruneTree :: (a -> Bool) -> Tree a -> Tree a
 pruneTree p n@(Node {subForest}) = n {subForest = [pruneTree p c | c@(Node {rootLabel}) <- subForest, not $ p rootLabel]}
 
+-- | @x `putInTree` y@ puts x into y's subForest
+putInTree :: Tree a -> Tree a -> Tree a
+putInTree a n@(Node {subForest = sf}) = n {subForest = sf <> [a]}
+        
 -- | Like 'findByPath', searches through tree for branch that matches string of predicates. Rather than returning a tree whose branches match the predicates, matchTree returns the deepest nodes matching all the predicates. For example, in the tree 5 {4, 3, 2}, matchTree [odd, odd] returns [3]. matchTree [odd, even] would return [4, 2]. Of course, matchTree [odd] returns [5].
 --
 -- This is basically a generalized CSS selector.
@@ -96,6 +105,86 @@ matchTree (p:ps) (Node {rootLabel, subForest})
 -- Keep in mind that selectBranches returns parent-most matching nodes. For example: if you wanted to search for \<div\>'s, and some div's contained other div's, only the parent-most div would be included in the result list. That node still has subnodes in its branches, but if you want all nodes, you should do a fold of your own.
 selectBranches :: (t -> Bool) -> Tree t -> [Tree t]
 selectBranches p = go [] where go ret n@(Node {rootLabel, subForest}) = if p rootLabel then n:ret else foldMap (go ret) subForest
+
+{- I don't even remember why I began writing this (or toPaths). I'll finish it whenever needed or if I feel like solviing it just for heckies.
+fromPaths :: Eq a => NonEmpty (NonEmpty a) -> Tree a
+fromPaths bs = foldr (\branch t -> _) (Node (NE.head $ NE.head bs) []) $ NE.drop 1 <$> bs
+    where
+        -- | A left-to-right list of nodes becomes a bottom-to-top hierarchy. The Int in the return value is the rightmost Int of the list (and is thus a minimum of the input list's fst's.)
+        -- listToBranch [(8, pure "gc"), (4, pure "c"), (0, pure "p")] --> (0,
+        -- ─ p
+        --   └─ c
+        --      └─ gc)
+        -- Note that the following assertion should hold: ∀i j ∈ fst <$> inputList: i < j => inputList !! i > inputList !! j.
+        -- We return the minimum because listToBranch represents folding a list into a (sub)tree; that subtree is rooted at a particular level; this level is what's returned.
+        listToBranch :: [(i, Tree a)] -> (i, Tree a)
+        listToBranch = maybe (error "Logic error in function readIndented(General): empty list passed to listToBranch. Please report this bug.") (uncurry $ foldl' (\(_,b) (i,a) -> (i, b `putInTree` a))) . uncons -}
+
+-- | Convert a tree to a list of its branches. An embedding into M(n,m) space (a ragged array) for a tree with n levels and a maximum of m siblings across its levels.
+toPaths :: Tree a -> NonEmpty (NonEmpty a)
+toPaths = NE.fromList . fmap NE.fromList . go
+    where
+        go :: Tree a -> [[a]]
+        go (Node r []) = pure (pure r) -- we need to specify a base case value because foldMap/foldr (and fmap) both do *nothing* (i.e. work with undefined) when predicated over the empty list! Thus our base case must not be [] :: [[Int]]; but instead, [[]] :: [[Int]]. The usual recursive function would see us doing (r:) <$> [[]], which equals [[r]], so [[r]] is what we return here.
+        go (Node r cs) = (r:) <$> foldMap go cs
+
+-- | Creates a directed graph from a tree.
+toGraph :: Graph gr
+        => Bool -- ^ whether to direct arrows from children to parent
+        -> Bool -- ^ whether to direct arrows between siblings
+        -> Tree a -- ^ tree to convert
+        -> gr a Rel
+toGraph directUp directSibs = \(Node r rs) -> case go mempty 1 ((0,) <$> rs) of
+    (sibsMap, vs, es) -> uncurry mkGraph ((0, r):vs, M.foldl' (\edges children -> connect children <> edges) es sibsMap)
+    where
+        go :: ( M.Map Int [Int] -- pid -> associated children's node id
+              , [LNode a] -- vertex set
+              , [LEdge Rel] -- edge set
+              )
+           -> Int -- counter
+           -> [(Int, Tree a)] -- stack of: (parent node id, current node to traverse)
+           -> ( M.Map Int [Int]
+              , [LNode a]
+              , [LEdge Rel]
+              )
+        go x@(sibsMap, vs, es) i@(succ -> j) = \case
+            [] -> x -- return the stuff
+            (pid, Node r rs) : stack -> -- collect new stuff
+                let vertex = (i, r) -- this node as a vertex
+                    edges =
+                        let cov = (pid, i, Child)
+                            contrav = (i, pid, Parent)
+                        in if directUp then [cov, contrav] else [cov]
+                    map' = if directSibs then
+                               case M.lookup pid sibsMap of
+                                   Nothing -> M.insert pid [i] sibsMap
+                                   Just cs -> M.update (pure . (i:)) pid sibsMap
+                           else sibsMap
+                in go (map', vertex:vs, edges <> es) j $ ((i,) <$> rs) <> stack
+
+        connect :: [Int] -> [LEdge Rel]
+        connect cs = toList . S.fromList $ do -- TODO: don't use set to remove duplicates
+            i <- cs
+            j <- cs
+            guard (i /= j)
+            [(i,j,Sibling), (j,i,Sibling)]
+
+{-
+-- | 'toGraph' with more edges:
+--
+-- * every child/parent pair has exctly two edges which form a cycle
+-- * sibling subgraphs are connected
+toFullGraph :: Graph gr => Tree a -> gr a Rel
+toFullGraph
+-}
+
+-- | Create a text readable by 'readIndentedText'
+showIndented :: (a -> T'.Text) -- ^ convert item to text
+              -> Tree a
+              -> T'.Text
+showIndented toText = T'.init . go 0 -- init ∵ go leaves a trailing newline. Works fine on singleton trees, too.
+    where
+        go indentation (Node (toText -> a) xs) = mtimesDefault (4 * indentation) " " <> a <> "\n" <> foldMap (go (succ indentation)) xs
 
 -- | Generalizes 'readIndented' by determining tree level by a given function rather than the number of spaces. Created for the @autoSections@ – and later @deriveTOC@ – functions in my @nixys-server-box@ package.
 --
@@ -140,11 +229,7 @@ readIndentedGeneral toL toLvl'R is = (\case Left l -> pure (Left l); Right (p, t
         -- | (indention_level, Node text [])
 --      textToPair :: a -> Either a (i, Tree a) -- existential crisis if uncomment
         textToPair = fmap (second pure) . toLvl'R
-        
-        -- | @x `putInTree` y@ puts x into y's subForest
-        putInTree :: Tree a -> Tree a -> Tree a
-        putInTree a n@(Node {subForest = sf}) = n {subForest = sf <> [a]}
-        
+
         -- | A left-to-right list of nodes becomes a bottom-to-top hierarchy. The Int in the return value is the rightmost Int of the list (and is thus a minimum of the input list's fst's.)
         -- listToBranch [(8, pure "gc"), (4, pure "c"), (0, pure "p")] --> (0,
         -- ─ p

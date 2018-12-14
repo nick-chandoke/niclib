@@ -65,6 +65,7 @@ instance (Applicative m, Monoid s, Monoid a) => Monoid (WriterT s m a) where
 mtell :: (Monoid s, Monoid a, Monad m) => s -> WriterT s m a
 mtell = mempty <=< tell
 
+-- TODO: encode via ChronicleT <http://hackage.haskell.org/package/these> instead of ExceptT (AccumT)? Is there benefit (elegance or efficiency, part. in regard to optimizability)?
 -- | Combination of the 'ExceptT' and 'AccumT' monads. Allows logging warning messages, or exiting on errors.
 --
 -- Encourages assuming that anything that could generate a warning could, sometime through revisions of the program, produce an error,
