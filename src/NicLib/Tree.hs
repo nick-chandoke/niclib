@@ -1,3 +1,6 @@
+-- | This module was written for HTML manipulation. Since discovering the hxt package, all of the predicate-based tree filters herein are deprecated and thusly unmaintained. They will likely be removed in future versions. In fact, I'm doubtful that one should concern themselves with trees not expressed as graphs or zippers. I've yet to study the practicality of using (or especially manipulating) non-graph non-zipper trees, enough to determine to what extent such trees are useful. I'm also very keen on learning how hxt uses arrows; upon which structures do arrows operate, and how efficient are these operations?
+--
+-- 'readIndentedGeneral' and friends are still relevant, however.
 module NicLib.Tree
 ( Rel(..)
   -- * Filters
@@ -8,6 +11,7 @@ module NicLib.Tree
 -- * Utilities
 , putInTree
 , toGraph
+, toGraph'
 -- * Morphisms from Tree
 , toPaths
 , showIndented
@@ -134,20 +138,65 @@ toGraph :: Graph gr
         -> Bool -- ^ whether to direct arrows between siblings
         -> Tree a -- ^ tree to convert
         -> gr a Rel
-toGraph directUp directSibs = \(Node r rs) -> case go mempty 1 ((0,) <$> rs) of
-    (sibsMap, vs, es) -> uncurry mkGraph ((0, r):vs, M.foldl' (\edges children -> connect children <> edges) es sibsMap)
+toGraph c s = (\(_,vs,es) -> mkGraph vs es) . toGraph' 0 c s
+
+-- | Create a graph with nodes starting from a given index. Useful for reading multiroot trees.
+-- For instance, you may want a function that creates a graph from a multiroot tree:
+--
+-- @
+-- multiTreeToGraph :: Graph gr => T'.Text -> gr T'.Text Rel
+-- multiTreeToGraph = (\(_,x,y) -> mkGraph x y) . foldl' g (0,[],[]) . readIndentedText id
+--     where
+--         g b@(k,vs,es) -> \case
+--             Right t -> case toGraph' k False False t of
+--                 (k',vs',es') -> (k',vs <> vs', es <> es')
+--             _ -> b
+-- @
+--
+-- Let's make a file called multiTree.txt:
+--
+-- @
+-- node 1
+--     node 2
+--     node 3
+--         node 4
+--     node 5
+-- node 2:1
+--     node 2:2
+--         node 2:5
+--     node 2:3
+--     node 2:4
+-- @
+--
+-- And use it altogether with <http://hackage.haskell.org/package/fgl-visualize-0.1.0.1/docs/Data-Graph-Inductive-Dot.html fgl-visualize> - a package that generates graphviz dot files from fgl graphs. Below is my GHCi session:
+--
+-- @
+-- :m + Text.Dot Data.Graph.Inductive.Dot Data.Graph.Inductive.PatriciaTree
+-- TIO.readFile "/home/nic/multiTree.txt" >>= writeFile "/home/nic/multiTree.gv" . showDot . (fglToDot :: Gr T'.Text Rel -> Dot ()) . multiTreeToGraph
+-- @
+--
+-- Then in bash, @dot -Tsvg -O multiTree.gv@. This produces this lovely graphic:
+--
+-- ![multiTree.gv.svg](TODO: upload ~/multiTree.gv.svg to CloudFlare, then put that URL here)
+--
+-- Remember to pass @--package fgl-visualize --package dotgen@ if using @stack ghci@.
+toGraph' :: Int -- ^ number nodes starting at this index
+         -> Bool -- ^ whether to direct arrows from children to parent
+         -> Bool -- ^ whether to direct arrows between siblings
+         -> Tree a -- ^ tree to convert
+         -> (Int, [LNode a], [LEdge Rel])
+toGraph' i0 directUp directSibs = \(Node r rs) -> case go (i0 + 1, mempty, mempty, mempty) ((i0,) <$> rs) of
+    (k, sibsMap, vs, es) -> (k, (i0, r):vs, M.foldl' (\edges children -> connect children <> edges) es sibsMap)
     where
-        go :: ( M.Map Int [Int] -- pid -> associated children's node id
-              , [LNode a] -- vertex set
-              , [LEdge Rel] -- edge set
-              )
-           -> Int -- counter
+        go :: t ~ ( Int
+                  , M.Map Int [Int] -- pid -> associated children's node id
+                  , [LNode a] -- vertex set
+                  , [LEdge Rel] -- edge set
+                  )
+           => t
            -> [(Int, Tree a)] -- stack of: (parent node id, current node to traverse)
-           -> ( M.Map Int [Int]
-              , [LNode a]
-              , [LEdge Rel]
-              )
-        go x@(sibsMap, vs, es) i@(succ -> j) = \case
+           -> t
+        go x@(i@(succ -> j), sibsMap, vs, es) = \case
             [] -> x -- return the stuff
             (pid, Node r rs) : stack -> -- collect new stuff
                 let vertex = (i, r) -- this node as a vertex
@@ -160,7 +209,7 @@ toGraph directUp directSibs = \(Node r rs) -> case go mempty 1 ((0,) <$> rs) of
                                    Nothing -> M.insert pid [i] sibsMap
                                    Just cs -> M.update (pure . (i:)) pid sibsMap
                            else sibsMap
-                in go (map', vertex:vs, edges <> es) j $ ((i,) <$> rs) <> stack
+                in go (j, map', vertex:vs, edges <> es) $ ((i,) <$> rs) <> stack
 
         connect :: [Int] -> [LEdge Rel]
         connect cs = toList . S.fromList $ do -- TODO: don't use set to remove duplicates
@@ -168,15 +217,6 @@ toGraph directUp directSibs = \(Node r rs) -> case go mempty 1 ((0,) <$> rs) of
             j <- cs
             guard (i /= j)
             [(i,j,Sibling), (j,i,Sibling)]
-
-{-
--- | 'toGraph' with more edges:
---
--- * every child/parent pair has exctly two edges which form a cycle
--- * sibling subgraphs are connected
-toFullGraph :: Graph gr => Tree a -> gr a Rel
-toFullGraph
--}
 
 -- | Create a text readable by 'readIndentedText'
 showIndented :: (a -> T'.Text) -- ^ convert item to text
