@@ -144,12 +144,12 @@ toGraph c s = (\(_,vs,es) -> mkGraph vs es) . toGraph' 0 c s
 -- For instance, you may want a function that creates a graph from a multiroot tree:
 --
 -- @
--- multiTreeToGraph :: Graph gr => T'.Text -> gr T'.Text Rel
+-- multiTreeToGraph :: Graph gr => Text -> gr Text Rel
 -- multiTreeToGraph = (\(_,x,y) -> mkGraph x y) . foldl' g (0,[],[]) . readIndentedText id
 --     where
---         g b@(k,vs,es) -> \case
+--         g b@(k,vs,es) = \case
 --             Right t -> case toGraph' k False False t of
---                 (k',vs',es') -> (k',vs <> vs', es <> es')
+--                 (k',vs',es') -> (k', vs <> vs', es <> es')
 --             _ -> b
 -- @
 --
@@ -171,7 +171,7 @@ toGraph c s = (\(_,vs,es) -> mkGraph vs es) . toGraph' 0 c s
 -- And use it altogether with <http://hackage.haskell.org/package/fgl-visualize-0.1.0.1/docs/Data-Graph-Inductive-Dot.html fgl-visualize> - a package that generates graphviz dot files from fgl graphs. Below is my GHCi session:
 --
 -- @
--- :m + Text.Dot Data.Graph.Inductive.Dot Data.Graph.Inductive.PatriciaTree
+-- :m + Text.Dot Data.Graph.Inductive.Dot Data.Graph.Inductive.Graph Data.Graph.Inductive.PatriciaTree
 -- TIO.readFile "/home/nic/multiTree.txt" >>= writeFile "/home/nic/multiTree.gv" . showDot . (fglToDot :: Gr T'.Text Rel -> Dot ()) . multiTreeToGraph
 -- @
 --
@@ -250,15 +250,15 @@ readIndentedGeneral toL toLvl'R is = (\case Left l -> pure (Left l); Right (p, t
             Just (text, ts) ->
                 case textToPair text of
                     Left l -> go ((i, pure l `putInTree` t):ps) ts -- put moot node as child of stack's top node. Don't modify the current indentation.
-                    Right p'@(i',_) -> case compare i' i of
+                    Right p'@(i',_) -> let nipN'Plant = close (pure s) <> go [p'] ts in case compare i' i of
                         GT -> go (p':s) ts -- current text is more indented than prior text; push this pair to the stack
                         EQ -> case ps of -- EQ means that p is a single-node/childless tree; because it won't have any children, we can assuredly pop it off the stack and fold it into its parent!
-                            [] -> pure . Left $ "Tree must have exactly one root; \"" <> toL text <> "\" cannot also be a root."
+                            [] -> nipN'Plant
                             (parent:ancestors) -> go (p' : second (t `putInTree`) parent : ancestors) ts -- second (t `putInTree`) parent = listToBranch [p, parent], but more efficient
                         LT -> case span ((/=i') . fst) s of
                             (_,[]) -> pure . Left $ "Improperly formatted list: a node with text value \"" <> toL text <> "\" should have the same indentation as some previous node, but it doesn't."
                             (a, b:bs) -> case (a <> [b], bs) of -- we need to go one further than span, to include the last sibling of p'
-                                (_,[]) -> close (pure s) <> go [case textToPair text of Right q -> q] ts -- like the entrypoint to readIndentedGeneral, except that we know that we're given a list starting with a Right-like element
+                                (_,[]) -> nipN'Plant -- like the entrypoint to readIndentedGeneral, except that we know that we're given a list starting with a Right-like element
                                 (listToBranch -> (_,z), parent:ancestors) -> go (p' : second (z `putInTree`) parent : ancestors) ts
                                            -- this^ blank should equal i'
 
@@ -278,7 +278,7 @@ readIndentedGeneral toL toLvl'R is = (\case Left l -> pure (Left l); Right (p, t
         -- Note that the following assertion should hold: ∀i j ∈ fst <$> inputList: i < j => inputList !! i > inputList !! j.
         -- We return the minimum because listToBranch represents folding a list into a (sub)tree; that subtree is rooted at a particular level; this level is what's returned.
         listToBranch :: [(i, Tree a)] -> (i, Tree a)
-        listToBranch = maybe (error "Logic error in function readIndented(General): empty list passed to listToBranch. Please report this bug.") (uncurry $ foldl' (\(_,b) (i,a) -> (i, b `putInTree` a))) . uncons
+        listToBranch = maybe (error "Logic error in function readIndented(General): empty list passed to listToBranch. Please report this bug to <nicholas.chandoke@gmail.com>.") (uncurry $ foldl' (\(_,b) (i,a) -> (i, b `putInTree` a))) . uncons
 
 -- | Reads (multirooted) trees encoded in indented text /e.g./
 --

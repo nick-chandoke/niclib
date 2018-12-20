@@ -50,6 +50,8 @@ insertPeriodically n i = LL.tail . fst . LL.foldl' (\(b,c) a -> (b `LL.append` i
 -- >>> breakAtLast '.' "file.ext"
 -- ("file.", "ext")
 --
+-- (By the way, to replace a filepath's extension, use 'NicLib.FileSystem.withExtension')
+-- 
 -- You may use @\case ("", _) -> ⋯@ to match against "there's no separator:"
 --
 -- >>> breakAtLast ';' "noseparator"

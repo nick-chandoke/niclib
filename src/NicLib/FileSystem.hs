@@ -18,6 +18,7 @@ module NicLib.FileSystem
 , nextDuplicateFileName
 , pathOrNextDuplicate
 , fileExtension
+, withExtension
 , dirAndBase
 , dirname
 , basename
@@ -122,6 +123,19 @@ pathOrNextDuplicate p = bool p (nextDuplicateFileName p) <$> D.doesPathExist p
 -- | Get file extension. Returns empty string if no extension. Extension includes leading dot.
 fileExtension :: String -> String
 fileExtension s = if '.' `elem` s then ('.':) . reverse . takeWhile (/='.') $ reverse s else empty
+
+-- | Replace a file's extension if it has one; add one if it doesn't
+-- Do not include the dot.
+--
+-- >>> "/path/to/file.png" `withExtension` "txt"
+-- "/path/to/file.txt"
+--
+-- >>> "file.png" `withExtension` "txt"
+-- "file.txt"
+withExtension :: String -> String -> String
+withExtension s ext = case breakAtLast '.' s of
+    ("",_) -> s ++ '.':ext
+    (a,_) -> a ++ ext
 
 mkdir :: MonadIO m => String -> m ()
 mkdir dir = liftIO $ D.createDirectoryIfMissing True dir
