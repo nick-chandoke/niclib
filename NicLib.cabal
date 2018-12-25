@@ -13,14 +13,14 @@ name: NicLib
 stability: Stable
 synopsis: nixy's personal lib
 tested-with: GHC ==8.4.3
-version: 0.1.5
+version: 0.1.6
 
 library
   ghc-options: -Wno-type-defaults
   hs-source-dirs: src
   exposed-modules:
       Control.Monad.Trans.Lookup
-      NicLib.Errors
+      NicLib.AccumShort
       NicLib.FileSystem
       NicLib.List
       NicLib.Net
@@ -44,13 +44,13 @@ library
       filepath,
       fgl,
       ghc-prim,
---    http-types,
+      http-client,
 --    http-conduit,
---    http-client,
 --    streaming-commons,
       random-fu,
       random-source,
       req,
+      req-conduit,
       safe-exceptions,
       store,
       transformers>=0.5.5.0,

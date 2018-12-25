@@ -1,6 +1,7 @@
 -- | Operations that I want to merge into the <http://hackage.haskell.org/package/ListLike ListLike> package, but haven't yet (before doing that I want ListLike to be in terms of type families rather than func deps, so that both char8 bytestring and word8 bytestring can both be listlike's)
 module NicLib.List
 ( breakAtLast
+, breakAtLastP
 , replaceAll
 , breakOn
 , chunksOf
@@ -65,11 +66,17 @@ insertPeriodically n i = LL.tail . fst . LL.foldl' (\(b,c) a -> (b `LL.append` i
 -- >>> breakAtLast undefined ""
 -- ("", "")
 breakAtLast :: (LL.ListLike full item, Eq item) => item -> full -> (full, full)
-breakAtLast sep = go . (LL.empty,)
+breakAtLast sep = breakAtLastP (==sep)
+
+-- | 'breakAtLast' generalized in the predicate
+breakAtLastP :: (LL.ListLike full item, Eq item) => (item -> Bool) -> full -> (full, full)
+breakAtLastP p = go . (LL.empty,)
     where
-        go z@(x, y) = case LL.break (==sep) y of
-            (a, b) | LL.null b -> z
-                   | otherwise -> go (x <> LL.snoc a sep, LL.tail b)
+        go z@(x, y) = case LL.break p y of
+            (a, b) ->
+                case LL.uncons b of
+                    Nothing -> z
+                    Just (bh, bs) -> go (x <> LL.snoc a bh, bs)
 
 -- | 'Data.Text.breakOn' generalized to ListLike's
 breakOn :: (LL.ListLike full item, Eq item) => full -> full -> (full, full)

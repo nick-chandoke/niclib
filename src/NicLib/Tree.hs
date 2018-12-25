@@ -41,7 +41,7 @@ import qualified Data.Set as S
 import qualified Data.Map.Lazy as M
 
 -- NicLib
-import NicLib.Errors (liftME)
+import NicLib.AccumShort (liftME)
 import NicLib.NStdLib (bool')
 
 -- misc.
@@ -207,7 +207,7 @@ toGraph' i0 directUp directSibs = \(Node r rs) -> case go (i0 + 1, mempty, mempt
                     map' = if directSibs then
                                case M.lookup pid sibsMap of
                                    Nothing -> M.insert pid [i] sibsMap
-                                   Just cs -> M.update (pure . (i:)) pid sibsMap
+                                   Just _ -> M.update (pure . (i:)) pid sibsMap
                            else sibsMap
                 in go (j, map', vertex:vs, edges <> es) $ ((i,) <$> rs) <> stack
 

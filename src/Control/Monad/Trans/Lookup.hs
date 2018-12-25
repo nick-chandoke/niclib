@@ -104,7 +104,7 @@ import qualified Data.Text.Lazy as T
 
 -- NicLib
 import NicLib.NStdLib ((<%), morphism239, readMaybe, findM)
-import NicLib.Errors (liftME)
+import NicLib.AccumShort (liftME)
 
 -- transformers
 import Control.Monad.IO.Class

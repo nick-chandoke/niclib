@@ -1,6 +1,6 @@
 -- | Some helpful convenience functions. Note that much of this library has been obsoleted by conduit and safe-exceptions.
 --
--- Concerning exceptions, this lib used to have everything wrapped in @AccumT@ or @ExceptT@. No longer! After all, exception handling is nuanced and specialized to the particular needs of the program being run. As of NicLib v0.1.3 it's now up to the user to handle (usually accumulating or short-circuiting on) exceptions. Use 'NicLib.Errors' or 'Control.Exception.Safe' for this ;)
+-- Concerning exceptions, this lib used to have everything wrapped in @AccumT@ or @ExceptT@. No longer! After all, exception handling is nuanced and specialized to the particular needs of the program being run. As of NicLib v0.1.3 it's now up to the user to handle (usually accumulating or short-circuiting on) exceptions. Use 'NicLib.AccumShort' or 'Control.Exception.Safe' for this ;)
 --
 -- Functions like 'ls' and 'mkdir' that may throw predictable exceptions (e.g. directory does not exist, permissions errors) do not have any exception handling done. However, functions that use such functions will account for their exceptions and concatenate them together (e.g. dirdiff will catch all file-not-found, can't-enter-directory, etc. exceptions, logging them in a @StringException@.) I do this because it's expected that any function f that concerns filesystem objects not passed to f as a parameter will probably throw some kind of exception, and we don't want to short-circuit the computation for something so commonplace.
 module NicLib.FileSystem
@@ -46,7 +46,7 @@ import Data.Maybe (isJust, fromMaybe)
 import Data.String (IsString(..))
 import Data.Text (Text)
 -- import Data.Tree -- *
-import NicLib.Errors
+import NicLib.AccumShort
 import NicLib.List
 import NicLib.NStdLib
 -- import NicLib.Text (quote) -- *
@@ -248,7 +248,7 @@ fileEq a b = do -- TODO: make exception safe!
 realPath :: String -> ExceptT [String] IO String
 realPath = go . pure -- ignore warning "non-exhaustive pattern not matched []"
     where go ss@(s:_) = liftIO (D.doesPathExist s) >>= \case
-            False -> err ss
+            False -> short ss
             True -> liftIO (D.pathIsSymbolicLink s) >>= \case
                 False -> return s
                 True -> liftIO (readSymbolicLink s) >>= go . (:ss) -- equal to realPath, but I err on the side of recursion rather than mutual recursion, for optimization.
