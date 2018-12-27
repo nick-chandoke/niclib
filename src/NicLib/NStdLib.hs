@@ -12,6 +12,8 @@ module NicLib.NStdLib
 , As(..)
 , OrderBy(..)
 , bool'
+, maybeC
+, boolC
 , both
 , cT
 , findM
@@ -121,6 +123,27 @@ readMaybe str = case reads str of
 -- @bool' ((-) 10) (+1) (\>3)@ equals (in the (->) monoidal functor) @\\n -> if n < 3 then n + 1 else n - 10@@
 bool' :: Applicative f => f d -> f d -> f Bool -> f d
 bool' = liftA3 bool
+
+-- | "Continuation(-like) maybe" 'maybe' that looks better when nesting non-monadic @Maybe@s, /e.g./ for these types of situations:
+--
+-- @
+-- maybeC (readMaybe \@Int val)
+--     (throw InvalidRead)
+--     $ \ival -\> boolC (ival /= 0)
+--         (putStrLn "bad input: 0")
+--         $ do
+--             c \<- readFile "file"
+--             ⋮
+-- @
+maybeC :: Maybe a -> b -> (a -> b) -> b
+maybeC m n j = maybe n j m
+
+-- | "Continuation(-like) bool" 'bool' that looks like CPS style. See 'maybeC' for example.
+boolC :: Bool
+      -> a -- ^ on False
+      -> a -- ^ on True
+      -> a
+boolC b f t = bool f t b
 
 -- | An efficient version of "if index in bounds then pure (item at index) else empty."
 (!!?) :: (Num n, Ord n, LL.ListLike list item, Alternative f) => list -> n -> f item

@@ -11,12 +11,13 @@
 -- import qualified Prelude as P
 -- 
 -- data C = C String String String deriving Show
--- data D = D String Int String deriving Show
+-- data D = D String Int    String deriving Show
 -- 
--- table1 = [("b", "value")] -- missing keys a and c (used for parsing into C)
+-- table1 = [("b", "value")]                               -- missing keys a and c (used for parsing into C)
 -- table2 = [("b", "value"), ("a", "valA"), ("c", "valC")] -- has all keys (used for parsing into C and D)
--- table3 = [("b", "value"), ("a", "35"), ("c", "valC")] -- has all keys, and a is an integer like it should be (used for parsing into D)
--- table4 = [("a", "3i5")] -- missing keys b and c, and a is not even integer like it should be (used for parsing into D)
+-- table3 = [("b", "value"), ("a", "35"), ("c", "valC")]   -- has all keys, and a is an integer like it should be (used for parsing into D)
+-- table4 = [("a", "3i5")]                                 -- missing keys b and c, and a is not even integer like it should be
+--                                                         -- (used for parsing into D)
 -- 
 -- parseInt v = liftME (ParseError v "not an integer") $ readMaybe v
 -- 
@@ -35,19 +36,19 @@
 -- @
 --
 -- >>> testFn table1
--- Left (fromList [Undefined {varName = "a"},Undefined {varName = "c"}])
+-- Left (fromList [Undefined: a,Undefined: c])
 --
--- >>> testFn table2@
+-- >>> testFn table2
 -- Right (C "valA" "value" "valC")
 --
 -- >>> testFnWParse table2
--- Left (fromList [ParseError {varName = "valA", cause = "not an integer"}])
+-- Left (fromList [Failed parsing valA: not an integer])
 --
 -- >>> testFnWParse table3
 -- Right (D "value" 35 "valC")
 --
 -- >>> testFnWParse table4
--- Left (fromList [Undefined {varName = "b"},Undefined {varName = "c"},ParseError {varName = "3i5", cause = "not an integer"}])
+-- Left (fromList [Undefined: b,Undefined: c,Failed parsing 3i5: not an integer])
 module Control.Monad.Trans.Lookup
 ( LookupT (..)
 , runLookup
@@ -57,6 +58,7 @@ module Control.Monad.Trans.Lookup
 -- * Common Lookup Functions
 , lookupFind
 , lookupFindDesperate
+, lookupMaybe
 , lookupEnv
 , lookupFile
 , lookupFileBS
@@ -126,7 +128,11 @@ data ParseError
         { varName :: String
         , cause :: String -- ^ description of why the parsing failed
         }
-    deriving (Eq, Show)
+    deriving Eq
+
+instance Show ParseError where
+    show (Undefined x) = "Undefined: " <> x
+    show (ParseError x c) = "Failed parsing " <> x <> ": " <> c
 
 -- | In a set of ParseError's, I want Undefined variables to be mentioned before variables that failed to parse
 instance Ord ParseError where
@@ -136,6 +142,7 @@ instance Ord ParseError where
     compare (ParseError x _) (ParseError y _) = compare x y
 
 -- | The primary way to create a @LookupT@ object
+--
 -- Remember that you can provide default values by using @\<|\> defaultValue@ in the lookup function (the 3rd parameter)
 lookup :: Monad m
        => (i -> String) -- ^ for collecting identifiers as error output strings
@@ -176,7 +183,9 @@ instance MonadTrans LookupT where
 
 -- | 'lookup' based around 'findM'
 --
--- Find the first item in a Foldable whose 2nd letter is 'o'; then try to parse its 3rd character to an int:
+-- === Example
+--
+-- Find the first item in a @Foldable@ whose 2nd letter is \'o\'; then try to parse its 3rd character to an @Int@:
 --
 -- @
 -- let var = "somevar"
@@ -191,10 +200,10 @@ instance MonadTrans LookupT where
 -- Right 4
 --
 -- >>> lkupFn "Here are some wo4ds"
--- Left (fromList [ParseError {varName = "somevar", cause = "Couldn't parse to int"}])
+-- Left (fromList [Failed parsing somevar: Couldn't parse to int])
 --
 -- >>> lkupFn "Here are many things"
--- Left (fromList [Undefined {varName = "somevar"}])
+-- Left (fromList [Undefined: somevar}])
 --
 -- Note that inserting "some" causes failure, despite "wo4ds" being a valid candidate. To continue searching until parse matches, use 'lookupFindDesperate'.
 lookupFind :: (Monad m, Foldable t)
@@ -210,9 +219,9 @@ lookupFind str parse predicate xs = lookup (const str) parse (\i s -> findM pred
 -- So it's MaybeT to the rescue!?
 -- | Like 'lookupFind', but searches through failed-parsing-elements, returning on the first element matching both predicate /and/ successfully parsing, if any such element exists.
 --
--- Thus if @lookupFindDesperate@ returns a @ParseError@, it must be of the @Undefined@ constructor. Be careful when using this in your logic, as saying that "no satisfactory & parsable object could be found" means the same as "undefined" can be misleading.
+-- Thus if @lookupFindDesperate@ returns a @ParseError@, it must be of the @Undefined@ constructor. Be careful when using this in your logic, as saying that "\'no satisfactory & parsable object could be found\' means the same as \'undefined\'" can be misleading.
 --
--- Continuing where the example from 'lookupFind' left-off, if, in the definition of lkupFn, we replace lookupFind with lookupFindDesperate,
+-- Continuing where the example from 'lookupFind' left-off, if, in the definition of @lkupFn@, we replace @lookupFind@ with @lookupFindDesperate@,
 --
 -- >>> lkupFn "Here are some wo4ds"
 -- Right 4
@@ -224,6 +233,16 @@ lookupFindDesperate :: (Monad m, Foldable t)
                     -> LookupT m b
 lookupFindDesperate str parse predicate = LookupT . fmap (maybe (Left . S.singleton $ Undefined str) Right) . runMaybeT . getAlt
     . foldMap (\i -> Alt $ lift (predicate i) >>= MaybeT . bool (pure Nothing) (either (const Nothing) Just <$> parse i))
+
+-- | Produce a @LookupT@ from a @Maybe@
+lookupMaybe :: Monad m
+            => String -- ^ variable name, for collecting into error message
+            -> (i -> m (Either ParseError b)) -- ^ parsing function. As always, use @pure . pure@ to mootly lift it
+            -> Maybe i
+            -> LookupT m b
+lookupMaybe nomos p = LookupT . \case
+    Nothing -> pure . Left . S.singleton $ Undefined nomos
+    Just a -> BiF.first S.singleton <$> p a
 
 lookupEnv :: Monad m => [(String, b)] -> String -> LookupT m b
 lookupEnv = lookup id (pure . pure) (pure <% P.lookup)

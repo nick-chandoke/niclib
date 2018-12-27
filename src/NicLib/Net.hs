@@ -34,14 +34,14 @@ module NicLib.Net
 -- * Render
 , normalize
 -- * Exception Type
-, NetException(..)
+, BadUrlException(..)
 -- * Re-exports from req or req-conduit
 , Url
 -- ** Custom Monad Config
 , MonadHttp(..)
 , HttpConfig(..)
 -- ** Request
--- , req
+, req
 , reqBc
 , req'
 , Req
@@ -123,16 +123,15 @@ module NicLib.Net
 ) where
 
 -- base
-import Control.Applicative (empty)
 import Control.Arrow
 import Data.Char (toLower)
 import Data.Foldable (foldl')
-import Data.Maybe (fromJust)
 import Data.Proxy
-import Data.Bifunctor (bimap)
+import qualified Data.Bifunctor as BiF
 
 -- text
 import Data.Text (Text)
+import qualified Data.Text as T'
 import Data.Text.Encoding (decodeUtf8)
 
 -- NicLib
@@ -153,16 +152,17 @@ import URI.ByteString hiding (parseURI, Scheme(..))
 import qualified URI.ByteString as U
 
 -- req and req-conduit
-import Network.HTTP.Client (Manager, Request, Response, BodyReader)
+import Network.HTTP.Client (Manager, Request)
 import Network.HTTP.Req hiding (req, req', reqBr)
 import Network.HTTP.Req.Conduit
 import qualified Network.HTTP.Req as Req
 
-data NetException
+data BadUrlException
     = NonHTTP
+    | MalformedURL String
     deriving (Show, Typeable)
 
-instance Exception NetException
+instance Exception BadUrlException
 
 instance MonadThrow Req where
     throwM = liftIO . Catch.throwM
@@ -256,7 +256,7 @@ reqBc :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpBodyA
       -> URIRef Absolute
       -> body
       -> (forall scheme. Option scheme)
-      -> (forall m. MonadResource m => ConduitT BS'.ByteString Void m a) -- ^ e.g. 'sinkFile'
+      -> (forall f. MonadResource f => ConduitT BS'.ByteString Void f a) -- ^ e.g. 'sinkFile'
       -> m a
 reqBc m uri body opts consumer = reqHelper opts uri $ \(u,o) ->
     Req.reqBr m u body (o <> opts) (\respBodyReader -> runConduitRes $ responseBodySource respBodyReader .| consumer)
@@ -275,32 +275,40 @@ req' m uri body opts f = reqHelper opts uri $ \(u,o) -> Req.req' m u body (o <> 
 
 type UO s = (Url s, Option s)
 type EUO = Either (UO 'Http) (UO 'Https)
+newtype GOpt = GOpt (forall (s :: Scheme). Option s)
 
 reqHelper :: MonadThrow m
           => (forall scheme. Option scheme)
           -> URIRef Absolute
           -> (forall scheme. UO scheme -> m a)
           -> m a
-reqHelper o u f = maybe (throw NonHTTP) (f ||| f) -- return function or throw NonHTTP. Cane use (|||) because f is [must be] forall schemes.
-                . fmap (bimap (second (<>o)) (second (<>o))) -- apply generic options; can't use 'both' because o is reified to either
-                                                             -- Option 'Http or Option 'Https, which are two different types!
-                $ uriToUrl u -- convert to EUO
+reqHelper o u f = uriToUrl u >>= (f ||| f) . BiF.bimap (second (<>o)) (second (<>o))
 
--- TODO: parse basic authentication (user:pass@domain) and include as (Option 'Https) via basicAuth
--- | Returns @Nothing@ on non-http(s) schemes.
-uriToUrl :: URIRef Absolute -> Maybe EUO
-uriToUrl (URI {..}) =
-    let p :: Url a -> Url a -- type signatures given to keep polymorphism
-        p z = foldl' (\b a -> b /: decodeUtf8 a) z (BSC'.split '/' uriPath)
-        q :: Option a
-        q = foldMap (uncurry (=:) . both decodeUtf8) (queryPairs uriQuery)
-        authText = decodeUtf8 . hostBS . authorityHost $ fromJust uriAuthority
-        g :: e ~ Either (Url 'Http, Option 'Http) (Url 'Https, Option 'Https)
-          => ((Url a, Option a) -> e)
-          -> (Text -> Url a)
-          -> Maybe e
-        g side f = pure $ side (p (f authText), q)
-    in case BSC'.map toLower $ U.schemeBS uriScheme of
-        "http"  -> g Left http
-        "https" -> g Right https
-        _ -> empty
+-- | May throw 'BadUrlException'. Disregards URI fragments
+uriToUrl :: MonadThrow m => URIRef Absolute -> m EUO
+uriToUrl (URI {uriScheme, uriAuthority, uriPath, uriQuery}) = case uriAuthority of
+    Nothing -> throw $ MalformedURL "Authority"
+    Just (Authority {authorityUserInfo, authorityHost = ah, authorityPort}) ->
+        let host :: Text
+            host = (decodeUtf8 . hostBS) ah
+            
+            -- apply to a url after giving it a scheme via http or https functions
+            addPath :: Url scheme -> Url scheme
+            addPath z = if BS'.null uriPath then z else foldl' (\b a -> b /: decodeUtf8 a) z (BSC'.split '/' (BS'.tail uriPath))
+    
+            -- derive port, query params, and basicAuth from URI
+            options :: Either GOpt (Option 'Https)
+            options =
+                let generals :: Option s
+                    generals = 
+                        foldMap (\(both decodeUtf8 -> (k,v)) -> if T'.null v then queryFlag k else k =: v) (queryPairs uriQuery)
+                        <> maybe mempty (port . portNumber) authorityPort
+                in maybe (Left $ GOpt generals) (\case UserInfo user pass -> Right $ basicAuth user pass <> generals) authorityUserInfo
+
+            wrap = pure . BiF.first (BiF.first addPath)
+        in case options of
+            Left (GOpt gOpts) -> case BSC'.map toLower $ U.schemeBS uriScheme of
+                "http"  ->   wrap $ Left  (http  host, gOpts)
+                "https" ->   wrap $ Right (https host, gOpts)
+                _       ->   throw NonHTTP
+            Right secOpts -> wrap $ Right (https host, secOpts)
