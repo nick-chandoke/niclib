@@ -54,6 +54,7 @@ module Control.Monad.Trans.Lookup
 , runLookup
 , Lookup
 , lookup
+, lookupM
 , ParseError (..)
 -- * Common Lookup Functions
 , lookupFind
@@ -141,19 +142,29 @@ instance Ord ParseError where
     compare (ParseError _ _) (Undefined _) = GT
     compare (ParseError x _) (ParseError y _) = compare x y
 
+-- | Monadic variant of 'lookup' (parsing function returns in a monad)
+lookupM :: Monad m
+       => (i -> String)
+       -> (a -> m (Either ParseError b))
+       -> (i -> s -> m (Maybe a))
+       -> s
+       -> i
+       -> LookupT m b
+lookupM toStr p l s i = LookupT $ l i s >>= \case
+    Nothing -> pure . Left . S.singleton $ Undefined (toStr i)
+    Just a -> BiF.first S.singleton <$> p a
+
 -- | The primary way to create a @LookupT@ object
 --
 -- Remember that you can provide default values by using @\<|\> defaultValue@ in the lookup function (the 3rd parameter)
-lookup :: Monad m
+lookup :: Functor m
        => (i -> String) -- ^ for collecting identifiers as error output strings
-       -> (a -> m (Either ParseError b)) -- ^ function that parses a looked-up value into a final value (e.g. @read \@Int@)
+       -> (a -> Either ParseError b) -- ^ function that parses a looked-up value into a final value (e.g. @read \@Int@)
        -> (i -> s -> m (Maybe a)) -- ^ the lookup function (e.g. @\k -> Identity $ Prelude.lookup k@, or @\k -> Identity . Map.lookup k@, or @\f -> doesFileExist f >>= bool (pure Nothing) (readFile f)@)
        -> s -- ^ the structure to search through (e.g. @IO [(String,String)]@ or @Identity (Map String String)@)
        -> i -- ^ identifier to lookup
        -> LookupT m b
-lookup toStr p l s i = LookupT $ l i s >>= \case
-    Nothing -> pure . Left . S.singleton $ Undefined (toStr i)
-    Just a -> BiF.first S.singleton <$> p a
+lookup toStr p l s i = LookupT $ maybe (Left . S.singleton . Undefined $ toStr i) (BiF.first S.singleton . p) <$> l i s
 
 instance Applicative m => Applicative (LookupT m) where
     pure = LookupT . pure . pure
@@ -208,7 +219,7 @@ instance MonadTrans LookupT where
 -- Note that inserting "some" causes failure, despite "wo4ds" being a valid candidate. To continue searching until parse matches, use 'lookupFindDesperate'.
 lookupFind :: (Monad m, Foldable t)
             => String -- ^ variable name to be displayed in error messages
-            -> (i -> m (Either ParseError b)) -- ^ parsing function
+            -> (i -> Either ParseError b) -- ^ parsing function
             -> (i -> m Bool) -- ^ predicate to pass to find
             -> t i -- ^ list to search through
             -> LookupT m b
@@ -245,10 +256,10 @@ lookupMaybe nomos p = LookupT . \case
     Just a -> BiF.first S.singleton <$> p a
 
 lookupEnv :: Monad m => [(String, b)] -> String -> LookupT m b
-lookupEnv = lookup id (pure . pure) (pure <% P.lookup)
+lookupEnv = lookup id pure (pure <% P.lookup)
 
 lookupFileCommon :: (String -> IO b) -> String -> LookupT IO b
-lookupFileCommon f = lookup id (pure . pure) (\x _ -> doesFileExist x >>= bool (pure Nothing) (pure <$> f x)) undefined
+lookupFileCommon f = lookup id (pure) (\x _ -> doesFileExist x >>= bool (pure Nothing) (pure <$> f x)) undefined
 
 lookupFile :: FilePath -> LookupT IO String
 lookupFile = lookupFileCommon readFile
@@ -284,24 +295,21 @@ lookupFileTL = lookupFileCommon TLIO.readFile
 -- The type of this expression is @IO (Either (S.Set ParseError) Int)@. If you made a typo and put \"SHELVL\", then it'd return @Right 30@ in IO.
 --
 -- Remember to include @pure@ in your parsing function if you're using the @Identity@ category!
-lookupEnvWithDef :: Monad m
-                 => (b -> m (Either ParseError c))
+lookupEnvWithDef :: Applicative m
+                 => (b -> Either ParseError c)
                  -> c
                  -> [(String, b)]
                  -> String
                  -> LookupT m c
--- maybe (Just def)
-lookupEnvWithDef p def s i = LookupT $ (pure <% P.lookup) i s >>= \case
-    Nothing -> pure (Right def)
-    Just a -> BiF.first S.singleton <$> p a
+lookupEnvWithDef p def s i = LookupT . pure $ maybe (Right def) (BiF.first S.singleton . p) $ P.lookup i s
 
 -- TODO: abstract-away read and env, for easy combination of read (env, noread), (env, read), (notenv, read), (notenv, notread)
 -- | @lookupEnvWithDef@, but parses to some @Read@
 lookupEnvWithReadDef :: (Read i, Monad m) => i -> [(String, String)] -> String -> LookupT m i
-lookupEnvWithReadDef = lookupEnvWithDef (\s -> pure . liftME (ParseError s "Can't parse into an integer.") $ readMaybe s)
+lookupEnvWithReadDef = lookupEnvWithDef (\s -> liftME (ParseError s mempty) $ readMaybe s)
 
 lookupFileCommonWithDef :: (String -> IO b) -> b -> String -> LookupT IO b
-lookupFileCommonWithDef f def = lookup id (pure . Right) (\x _ -> doesFileExist x >>= bool (pure $ Just def) (pure <$> f x)) undefined
+lookupFileCommonWithDef f def = lookup id pure (\x _ -> doesFileExist x >>= bool (pure $ Just def) (pure <$> f x)) undefined
 
 lookupFileWithDef :: String -> FilePath -> LookupT IO String
 lookupFileWithDef = lookupFileCommonWithDef readFile

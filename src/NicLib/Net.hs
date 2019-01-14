@@ -213,14 +213,11 @@ instance MonadHttp _ where
 normalize :: URIRef a -> BS'.ByteString
 normalize = normalizeURIRef' aggressiveNormalization
 
--- | Made to parse href elements from HTML. Does not account for hand-written URLs like "site.com/page1", as this would not work in a browser.
---
--- Note that although such URIs are parsed correctly into authority and path, they're still of the @URIRef Realtive@ type because they are without a scheme.
---
--- Overrides 'Network.HTTP.Req.parseURI', supporting both absolute and relative 'URIRef's, rather than absolute only.
+-- | Made to parse href elements from HTML. Remember that hand-written URLs like "site.com/page1" are incorrectly parsed as relative url paths.
 parseURI :: BS'.ByteString -> Either URIParseError (Either (URIRef Relative) (URIRef Absolute))
-parseURI s = case U.parseURI laxURIParserOptions s of
-    Left (MalformedScheme MissingColon) -> either Left (pure . Left) $ parseRelativeRef laxURIParserOptions s
+parseURI s = let rel = either Left (pure . Left) $ parseRelativeRef laxURIParserOptions s in case U.parseURI laxURIParserOptions s of
+    Left (MalformedScheme MissingColon) -> rel
+    Left (MalformedScheme NonAlphaLeading) -> rel
     Left o -> Left o
     Right r -> pure $ Right r
 
@@ -230,15 +227,13 @@ parsed `relTo` (URI {..}) = case parsed of -- URI and RelativeRef have different
     RelativeRef {..} -> URI uriScheme uriAuthority rrPath rrQuery rrFragment -- make parsed relative to the absolute URIRef
     a@(URI _ _ _ _ _) -> a -- parsed was absolute already; keep as-is
 
--- | The most convenient way to parse a URI for a scraper (considering that a scraper is seeded with an initial URL, and stays within that URL's domain.) Combines @parseURI@, @relTo@, and @uriToUrl@.
---
--- @Left Nothing@ means non-https scheme; other @Left@'s are @URIParseError@s
---
--- Because @parseRelTo@ returns in non-monadic @Either@ (in innermost @Either@,) given that you'll usually consider a @Url 'Http@ equal to a @Url 'Https@, use '\(f :: (Url scheme, Option scheme) -> IO ()) -> f ||| f' over the object returned in *Either*.
-parseRelTo :: URIRef Absolute -> BS'.ByteString -> Either (Maybe URIParseError) (Either (Url 'Http, Option 'Http) (Url 'Https, Option 'Https))
-parseRelTo base bs = case parseURI bs of
-    Left l -> Left (Just l)
-    Right (either (`relTo` base) id -> absOrRel) -> liftME Nothing $ uriToUrl absOrRel
+-- | Inherit scheme and/or domain from a given absolute url. Convenience function built atop 'parseURI' and 'relTo'.
+parseRelTo :: URIRef Absolute -> BS'.ByteString -> Either URIParseError (URIRef Absolute)
+parseRelTo base bs =
+    let bs' = if "//" `BS'.isPrefixOf` bs then U.schemeBS (uriScheme base) <> ":" <> bs else bs
+    in case parseURI bs' of
+        Left l -> Left l
+        Right x -> pure $ either (`relTo` base) id x
 
 -- | 'reqBr' with 'getHttpResponse'. Left here in case it's useful, perhaps for JSON consumption, if there're no JSON conduit libraries. Usually use 'reqBc', through; any I/O should be done via Conduit.
 req :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpResponse response, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))

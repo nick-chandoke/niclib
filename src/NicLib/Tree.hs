@@ -241,7 +241,6 @@ readIndentedGeneral toL toLvl'R is = (\case Left l -> pure (Left l); Right (p, t
     p <- BiF.first (const "First line must parse into the tree's root; could not derive node level and value from first line.") $ textToPair root -- Nothing nodes are always siblings ↔ Nothing nodes must have a parent ↔ a Nothing node cannot be a root
     pure (p, ts)
     where
---      go :: [(i, Tree b)] -> [a] -> Seq (Either T'.Text (Tree b)) -- existential crisis if uncomment
         -- a trailing prime on variable names (e.g. i') denotes that of the current step; the same variable name without the prime denotes the prior step's values
         -- Mnemonics: t(ree), i(ndentation), p(air), s(stack). Note that variable "text" is used ONLY for returning error messages! p' is the form of text that's actually used in computation!
         -- Because of listToBranch, pushing a node onto the stack corresponds to increasing the depth of the tree by 1
@@ -267,7 +266,6 @@ readIndentedGeneral toL toLvl'R is = (\case Left l -> pure (Left l); Right (p, t
         close = pure . fmap (snd . listToBranch)
 
         -- | (indention_level, Node text [])
---      textToPair :: a -> Either a (i, Tree a) -- existential crisis if uncomment
         textToPair = fmap (second pure) . toLvl'R
 
         -- | A left-to-right list of nodes becomes a bottom-to-top hierarchy. The Int in the return value is the rightmost Int of the list (and is thus a minimum of the input list's fst's.)

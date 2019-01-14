@@ -14,7 +14,7 @@ module NicLib.FileSystem
 , mvt
 , cp
 , cpWithMetadata
-, cpPermissions
+, cpWithPermissions
 , nextDuplicateFileName
 , pathOrNextDuplicate
 , fileExtension
@@ -81,11 +81,11 @@ ls :: MonadIO m => String -> m [String]
 ls = liftIO . D.listDirectory
 
 -- | creates parent directories as necessary
-mv, cp, cpWithMetadata, cpPermissions :: (MonadIO m, MonadCatch m) => String -> String -> m ()
+mv, cp, cpWithMetadata, cpWithPermissions :: (MonadIO m, MonadCatch m) => String -> String -> m ()
 mv = withNewDir (cT liftIO D.renameFile)
 cp = withNewDir (cT liftIO D.copyFile)
 cpWithMetadata = withNewDir (cT liftIO D.copyFileWithMetadata)
-cpPermissions = withNewDir (cT liftIO D.copyPermissions)
+cpWithPermissions = withNewDir (cT liftIO D.copyPermissions)
 
 -- creates a destination directory if it doesn't already exist, then performs an action
 -- helper (non-exported) method for mv, cp, &c
@@ -124,7 +124,8 @@ pathOrNextDuplicate p = bool p (nextDuplicateFileName p) <$> D.doesPathExist p
 fileExtension :: String -> String
 fileExtension s = if '.' `elem` s then ('.':) . reverse . takeWhile (/='.') $ reverse s else empty
 
--- | Replace a file's extension if it has one; add one if it doesn't
+-- | Replace a file's extension if it has one; add one if it doesn't.
+
 -- Do not include the dot.
 --
 -- >>> "/path/to/file.png" `withExtension` "txt"
