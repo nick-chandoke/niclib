@@ -16,6 +16,8 @@ module NicLib.List
 , splitOn
 ) where
 
+import Prelude (succ)
+import RIO
 import Data.Traversable (fmapDefault)
 import Control.Applicative ((<|>))
 import NicLib.NStdLib

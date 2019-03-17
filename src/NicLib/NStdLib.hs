@@ -4,7 +4,6 @@ module NicLib.NStdLib
 , (%>)
 , (<%)
 , (<&&>)
-, (<&>)
 , (<||>)
 , (>*>)
 , (?)
@@ -19,19 +18,20 @@ module NicLib.NStdLib
 , findM
 , foldBins
 , foldBins'
-, foldMapM
 , morphism239
 , morphism240
 , morphism46
 , partitionM
-, readMaybe
 , replicateM'
 , showBin
 , sxor
-, whenM
 , xor
+, liftME
+, describeIOError
 ) where
 
+import RIO hiding (GT, LT, EQ, (.), id, curry, uncurry)
+import Data.Proxy
 import Control.Applicative
 import Control.Arrow
 import Control.Category
@@ -46,14 +46,14 @@ import Data.Function (on, fix) -- importing everything messes with the ArrowCurr
 import Data.Foldable
 import Data.Maybe
 import Data.Monoid (Alt(..))
-import Data.Set (Set)
+import RIO.Set (Set)
 import Data.String
 import Data.Tree
 import Numeric (showIntAtBase)
-import Prelude hiding (GT, LT, EQ, (.), id, curry, uncurry)
 import qualified Data.ListLike as LL
 import qualified Data.Set as S
 import qualified Prelude
+import System.IO.Error
 
 -- | OrderBy inherits Eq & Ord instances from left tuple argument, ignoring right tuple argument
 newtype OrderBy a b = OrderBy {unOrderBy :: (a,b)}
@@ -84,12 +84,6 @@ infixr 2 ↔
 (↔) :: a -> a -> (a, a)
 (↔) = (,)
 
--- | So useful when doing, e.g. @when (directory is empty) ⋯@!
---
--- btw, whenM cannot exist for Applicatives. Also @whenM@ cannot be expressed in terms of @bool'@.
-whenM :: Monad m => m Bool -> m () -> m ()
-whenM c v = flip when v =<< c
-
 -- | Apply an operation to both objects of a Bifunctor
 both :: Bifunctor p => (a -> d) -> p a a -> p d d
 both f = bimap f f
@@ -103,20 +97,10 @@ xor x y = (x || y) && (not (x && y))
 sxor :: Ord a => Set a -> Set a -> Set a
 sxor r s = S.union (r S.\\ s) (s S.\\ r)
 
--- | flip fmap; <&>:<$>::&:$
-infixl 4 <&>
-(<&>) :: Functor f => f a -> (a -> b) -> f b
-(<&>) = flip fmap
-
 -- | @f &&& g >*> h@ is shorthand for @(f &&& g) >>> 'uncurry' h@
 infixr 2 >*>
 (>*>) :: ArrowCurry cat => cat a1 (a2, b) -> cat a2 (cat b c) -> cat a1 c
 x >*> h = x >>> uncurry h
-
-readMaybe :: Read a => String -> Maybe a
-readMaybe str = case reads str of
-    [(x,[])] -> Just x
-    _ -> Nothing
 
 -- | Like 'Data.Bool.bool', but allows pointfree manipulation like 'Data.Maybe.maybe' (for (->) Applicative, its most common use; or, sometimes one may use it in other Applicatives).
 --
@@ -318,7 +302,7 @@ foldBins' :: Foldable t => (c -> b1 -> c) -> (b2 -> b2 -> b1) -> c -> t (a -> b2
 foldBins' f1 f2 x = curry . foldl' (\t -> liftA2 f1 t . uncurry . on f2) (pure x)
 
 -- | Numeric has showHex and showOct, but not showBin? What.
-showBin :: (Show a, Integral a) => a -> ShowS
+showBin :: (Show a, Integral a) => a -> Prelude.ShowS
 showBin = showIntAtBase 2 intToDigit
 
 {-
@@ -338,10 +322,6 @@ replicateM' cnt0 f = g cnt0
             | cnt <= 0  = pure mempty
             | otherwise = liftA2 mappend f (g (cnt - 1))
 
--- | 'Data.Foldable.foldMap' generalized to monads
-foldMapM :: (Foldable t, Monad m, Monoid b) => (a -> m b) -> t a -> m b
-foldMapM f = foldM (\acc -> fmap (mappend acc) . f) mempty
-
 -- | 'Data.List.partition' generalized to monads and Foldables
 partitionM :: (Foldable t, Monad m) => (a -> m Bool) -> t a -> m ([a], [a])
 partitionM p = foldMapM (\a -> bool (mempty, pure a) (pure a, mempty) <$> p a)
@@ -349,3 +329,20 @@ partitionM p = foldMapM (\a -> bool (mempty, pure a) (pure a, mempty) <$> p a)
 -- | 'Data.Foldable.find' generalized to monads
 findM :: (Foldable t, Monad m) => (a -> m Bool) -> t a -> m (Maybe a)
 findM p = liftM getAlt . foldMapM (\x -> Alt . bool Nothing (Just x) <$> p x)
+
+-- | Get a synopsis of an @IOError@. For example, converts @isPermissionError@ to "Permission error".
+describeIOError :: IOError -> String
+describeIOError e = 
+    if | isPermissionError e    -> "Permission error"
+       | isAlreadyExistsError e -> "Filesystem object already exists"
+       | isDoesNotExistError e  -> "Filesystem object doesn't exist"
+       | isAlreadyInUseError e  -> "Filesystem object already in use"
+       | isFullError e          -> "Device we're trying to write to is already full"
+       | isEOFError e           -> "End of file reached too early"
+       | isIllegalOperation e   -> "Illegal operation"
+       | otherwise              -> "Unknown IO Error"
+
+-- | Lift a Maybe into Either
+liftME :: l -> Maybe a -> Either l a
+liftME l Nothing = Left l
+liftME _ (Just x) = Right x

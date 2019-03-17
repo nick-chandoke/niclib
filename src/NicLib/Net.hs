@@ -120,26 +120,31 @@ module NicLib.Net
 , urlEncodeQuery
 , urlEncodePath
 , urlEncode
+-- * Debugging Functions
+, unsafeParseURI
 ) where
+
+import RIO
 
 -- base
 import Control.Arrow
+import Control.Monad (foldM)
 import Data.Char (toLower)
 import Data.Foldable (foldl')
 import Data.Proxy
 import qualified Data.Bifunctor as BiF
+import Control.Applicative (liftA2)
 
 -- text
-import Data.Text (Text)
-import qualified Data.Text as T'
-import Data.Text.Encoding (decodeUtf8)
+import RIO.Text (Text, decodeUtf8')
+import qualified RIO.Text as T'
 
 -- NicLib
-import NicLib.NStdLib (both)
-import NicLib.AccumShort (liftME)
+import NicLib.NStdLib (both, liftME)
+import NicLib.FileSystem (concatPaths)
 
 -- bytestring
-import qualified Data.ByteString as BS'
+import qualified RIO.ByteString as BS'
 import qualified Data.ByteString.Char8 as BSC'
 
 -- misc
@@ -183,17 +188,17 @@ instance MonadHttp _ where
                 IncompleteHeaders                      -> (False, "Incomplete set of headers") -- how does it know it's incomplete?
                 InternalException ie                   -> (False, "Internal exception: " <> T'.pack (show ie))
                 InvalidChunkHeaders                    -> (False, "Invalid chunk header!")
-                InvalidDestinationHost h               -> (False, "Tried connecting to an invalid host (" <> decodeUtf8 h <> ")")
-                InvalidHeader s                        -> (False, "Could not parse header: " <> decodeUtf8 s)
+                InvalidDestinationHost h               -> (False, "Tried connecting to an invalid host (" <> decodeUtf8' h <> ")")
+                InvalidHeader s                        -> (False, "Could not parse header: " <> decodeUtf8' s)
                 InvalidProxySettings msg               -> (False, msg)
                 InvalidProxyEnvironmentVariable a b    -> (False, "Invalid proxy envvar: " <> a <> "=" <> b)
-                InvalidStatusLine s                    -> (False, "Unknown response status: " <> decodeUtf8 s) -- a status line is the HTTP response status code plus the "reason phrase", e.g. "OK" or "Not Found"
+                InvalidStatusLine s                    -> (False, "Unknown response status: " <> decodeUtf8' s) -- a status line is the HTTP response status code plus the "reason phrase", e.g. "OK" or "Not Found"
                 NoResponseDataReceived                 -> (True, "No response data from server at all. Was a connection closed prematurely?")
                 OverlongHeaders                        -> (False, "Header too long in server response")
-                ProxyConnectException bs code status   -> (False, "HTTP response " <> T'.pack (show code) <> " (" <> decodeUtf8 (statusMessage status) <> ") when trying to connect to proxy\n" <> decodeUtf8 bs)
+                ProxyConnectException bs code status   -> (False, "HTTP response " <> T'.pack (show code) <> " (" <> decodeUtf8' (statusMessage status) <> ") when trying to connect to proxy\n" <> decodeUtf8' bs)
                 ResponseBodyTooShort a b               -> (False, "Request body unexpected size (too Left); expected " <> T'.pack (show a) <> " but received" <> T'.pack (show b))
                 ResponseTimeout                        -> (True, "Timed-out waiting for server's response")
-                StatusCodeException resp bs            -> (False, T'.unlines ["non-2** response:", indent 4 $ T'.pack (show resp), indent 4 (decodeUtf8 bs)])
+                StatusCodeException resp bs            -> (False, T'.unlines ["non-2** response:", indent 4 $ T'.pack (show resp), indent 4 (decodeUtf8' bs)])
                 TlsNotSupported                        -> (False, "Manager doesn't support TLS. Are you using tlsManagerSettings from http-client-tls?")
                 TooManyRedirects resps                 ->
                     let v = fst $ foldr (\(T'.pack . show -> resp) (b,acc) -> ("Response #" <> T'.pack (show acc) <> ":" <> (indent 4 resp) <> b, succ acc :: Int)) (mempty,0) resps
@@ -219,21 +224,28 @@ parseURI s = let rel = either Left (pure . Left) $ parseRelativeRef laxURIParser
     Left (MalformedScheme MissingColon) -> rel
     Left (MalformedScheme NonAlphaLeading) -> rel
     Left o -> Left o
-    Right r -> pure $ Right r
+    Right r -> pure . Right $ r {uriPath = let p = uriPath r in if BSC'.null p then "/" else p}
 
 -- | Produce an absolute URL from a @parseURI@ value
 relTo :: URIRef a -> URIRef Absolute -> URIRef Absolute
 parsed `relTo` (URI {..}) = case parsed of -- URI and RelativeRef have different field names, so wildcards are safe
-    RelativeRef {..} -> URI uriScheme uriAuthority rrPath rrQuery rrFragment -- make parsed relative to the absolute URIRef
+    RelativeRef {..} -> URI -- make parsed relative to the absolute URIRef
+        uriScheme
+        uriAuthority
+        (if "/" `BSC'.isPrefixOf` rrPath then rrPath else concatPaths 0x2F uriPath (if "./" `BSC'.isPrefixOf` rrPath || "../" `BSC'.isPrefixOf` rrPath then rrPath else "../" <> rrPath))
+        rrQuery
+        rrFragment
     a@(URI _ _ _ _ _) -> a -- parsed was absolute already; keep as-is
 
 -- | Inherit scheme and/or domain from a given absolute url. Convenience function built atop 'parseURI' and 'relTo'.
 parseRelTo :: URIRef Absolute -> BS'.ByteString -> Either URIParseError (URIRef Absolute)
-parseRelTo base bs =
-    let bs' = if "//" `BS'.isPrefixOf` bs then U.schemeBS (uriScheme base) <> ":" <> bs else bs
-    in case parseURI bs' of
-        Left l -> Left l
-        Right x -> pure $ either (`relTo` base) id x
+parseRelTo base bs
+    | BSC'.null bs = Left (OtherError "parsing a null relative path is nonsensical")
+    | otherwise =
+        let bs' = if "//" `BS'.isPrefixOf` bs then U.schemeBS (uriScheme base) <> ":" <> bs else bs
+        in case parseURI bs' of
+            Left l -> Left l
+            Right x -> pure $ either (`relTo` base) id x
 
 -- | 'reqBr' with 'getHttpResponse'. Left here in case it's useful, perhaps for JSON consumption, if there're no JSON conduit libraries. Usually use 'reqBc', through; any I/O should be done via Conduit.
 req :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpResponse response, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
@@ -270,8 +282,11 @@ req' m uri body opts f = reqHelper opts uri $ \(u,o) -> Req.req' m u body (o <> 
 
 type UO s = (Url s, Option s)
 type EUO = Either (UO 'Http) (UO 'Https)
-newtype GOpt = GOpt (forall (s :: Scheme). Option s)
+newtype GOpt = GOpt { getOpts :: forall (s :: Scheme). Option s }
+instance Semigroup GOpt where GOpt a <> GOpt b = GOpt $ a <> b
+instance Monoid GOpt where mempty = GOpt mempty
 
+-- common function to all the req* functions
 reqHelper :: MonadThrow m
           => (forall scheme. Option scheme)
           -> URIRef Absolute
@@ -279,31 +294,40 @@ reqHelper :: MonadThrow m
           -> m a
 reqHelper o u f = uriToUrl u >>= (f ||| f) . BiF.bimap (second (<>o)) (second (<>o))
 
--- | May throw 'BadUrlException'. Disregards URI fragments
-uriToUrl :: MonadThrow m => URIRef Absolute -> m EUO
+-- | May throw 'BadUrlException' or 'UnicodeException'. Disregards URI fragments
+uriToUrl :: forall m. MonadThrow m => URIRef Absolute -> m EUO
 uriToUrl (URI {uriScheme, uriAuthority, uriPath, uriQuery}) = case uriAuthority of
     Nothing -> throw $ MalformedURL "Authority"
     Just (Authority {authorityUserInfo, authorityHost = ah, authorityPort}) ->
-        let host :: Text
-            host = (decodeUtf8 . hostBS) ah
-            
-            -- apply to a url after giving it a scheme via http or https functions
-            addPath :: Url scheme -> Url scheme
-            addPath z = if BS'.null uriPath then z else foldl' (\b a -> b /: decodeUtf8 a) z (BSC'.split '/' (BS'.tail uriPath))
-    
-            -- derive port, query params, and basicAuth from URI
-            options :: Either GOpt (Option 'Https)
-            options =
-                let generals :: Option s
-                    generals = 
-                        foldMap (\(both decodeUtf8 -> (k,v)) -> if T'.null v then queryFlag k else k =: v) (queryPairs uriQuery)
-                        <> maybe mempty (port . portNumber) authorityPort
-                in maybe (Left $ GOpt generals) (\case UserInfo user pass -> Right $ basicAuth user pass <> generals) authorityUserInfo
+        let -- apply to a url after giving it a scheme via http or https functions
+            addPath :: Url scheme -> m (Url scheme)
+            addPath z =
+                if BS'.null uriPath then
+                    pure z
+                else
+                    foldM (\b -> fmap (b /:) . decode) z (BSC'.split '/' (BSC'.tail uriPath))
 
-            wrap = pure . BiF.first (BiF.first addPath)
-        in case options of
-            Left (GOpt gOpts) -> case BSC'.map toLower $ U.schemeBS uriScheme of
-                "http"  ->   wrap $ Left  (http  host, gOpts)
-                "https" ->   wrap $ Right (https host, gOpts)
-                _       ->   throw NonHTTP
-            Right secOpts -> wrap $ Right (https host, secOpts)
+            wrap :: EUO -> m EUO
+            wrap (Left (x, y)) = Left . (,y) <$> addPath x
+            wrap x = pure x
+        in do
+            host <- decode (hostBS ah)
+            gOpts <- (GOpt (maybe mempty (port . portNumber) authorityPort) <>)
+                <$> foldMapM
+                    (uncurry (liftA2 (\k v -> GOpt $ if T'.null v then queryFlag k else k =: v)) . both decode)
+                    (queryPairs uriQuery)
+            case authorityUserInfo of
+                Nothing ->
+                    case BSC'.map toLower $ U.schemeBS uriScheme of
+                        "http"  ->   wrap $ Left  (http  host, getOpts gOpts)
+                        "https" ->   wrap $ Right (https host, getOpts gOpts)
+                        _       ->   throw NonHTTP
+                Just (UserInfo user pass) ->
+                    wrap $ Right (https host, basicAuth user pass <> getOpts gOpts)
+  where
+    decode :: BSC'.ByteString -> m Text
+    decode = either throw pure . decodeUtf8'
+
+-- | Runs 'parseURI' then pulls-out uri, assuming that it's absolute and well-formed
+unsafeParseURI :: BSC'.ByteString -> URIRef Absolute
+unsafeParseURI = (\case Right (Right x) -> x) . parseURI

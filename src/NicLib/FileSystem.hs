@@ -5,6 +5,7 @@
 -- Functions like 'ls' and 'mkdir' that may throw predictable exceptions (e.g. directory does not exist, permissions errors) do not have any exception handling done. However, functions that use such functions will account for their exceptions and concatenate them together (e.g. dirdiff will catch all file-not-found, can't-enter-directory, etc. exceptions, logging them in a @StringException@.) I do this because it's expected that any function f that concerns filesystem objects not passed to f as a parameter will probably throw some kind of exception, and we don't want to short-circuit the computation for something so commonplace.
 module NicLib.FileSystem
 ( FilePath(..)
+, concatPaths
 , mkdir
 , mkcd
 , ln
@@ -29,36 +30,32 @@ module NicLib.FileSystem
 , realPath
 ) where
 
-import Control.Exception.Safe (onException)
+import RIO hiding (FilePath)
+
+import Data.Function (on)
 import Control.Applicative
 import Control.Arrow ((&&&))
 import Control.Monad (guard)
 import Control.Monad.Catch
-import Control.Monad.IO.Class
 import Control.Monad.Trans.Except
 -- import Control.Monad.Trans.Reader -- * uncomment when finishing dirdiff
 import Data.Bool (bool)
-import Data.Foldable
 -- import Data.IORef -- *
 import Data.ListLike (ListLike)
-import Data.Maybe (isJust, fromMaybe)
--- import Data.Sequence ((|>)) -- *
+-- import RIO.Seq ((|>)) -- *
 import Data.String (IsString(..))
-import Data.Text (Text)
 -- import Data.Tree -- *
-import NicLib.AccumShort
 import NicLib.List
 import NicLib.NStdLib
 -- import NicLib.Text (quote) -- *
 import Prelude hiding (FilePath)
 import System.FilePath (pathSeparator)
-import System.IO hiding (FilePath)
 import System.Posix.Files (createSymbolicLink, readSymbolicLink)
 import qualified Data.ListLike as LL
--- import qualified Data.Set as S -- *
--- import qualified Data.Text as T' -- *
+-- import qualified RIO.Set as S -- *
+-- import qualified RIO.Text as T' -- *
 import qualified Prelude
-import qualified System.Directory as D
+import qualified RIO.Directory as D
 
 -- | Wrapper around @String@ filepaths such that their semigroup operation guarantees exactly one 'pathSeparator' between the @FilePath@'s. This is separate from @(\</\>)@, which sometimes puts two consecutive separators.
 newtype FilePath = FilePath { unwrapFilePath :: Prelude.FilePath }
@@ -66,15 +63,19 @@ instance IsString FilePath where fromString = FilePath
 instance Show FilePath where show = unwrapFilePath
 instance Monoid FilePath where
     mempty = FilePath mempty
-    (unwrapFilePath -> a) `mappend` (unwrapFilePath -> []) = FilePath a
-    (unwrapFilePath -> []) `mappend` (unwrapFilePath -> b) = FilePath b
-    (unwrapFilePath -> a)  `mappend` (unwrapFilePath -> b) = FilePath $
-        if | c a && d b -> a <> tail b -- we don't want a//b (posix) or a\\b (win); System.FilePath.(</>) doesn't account for this
-           | c a || d b -> a <> b
-           | otherwise  -> a <> (pathSeparator:b)
-        where c = (pathSeparator ==) . last
-              d = (pathSeparator ==) . head
+    mappend = FilePath <% (concatPaths pathSeparator) `on` unwrapFilePath
 instance Semigroup FilePath where (<>) = mappend -- GHC < 8.4.1 compat
+
+-- | Function used to append two paths with exactly one separator between them
+concatPaths :: (LL.ListLike full item, Eq item) => item -> full -> full -> full
+concatPaths s a b
+    | LL.null a = b
+    | LL.null b = a
+    | otherwise = if | c a && d b -> a <> LL.tail b -- we don't want a//b (posix) or a\\b (win); System.FilePath.(</>) doesn't account for this
+                     | c a || d b -> a <> b
+                     | otherwise  -> a <> (LL.cons s b)
+        where c = (s ==) . LL.last
+              d = (s ==) . LL.head
 
 -- | Prettier alias for 'D.listDirectory'
 ls :: MonadIO m => String -> m [String]
@@ -214,10 +215,6 @@ diff a b = S.foldr (\x (ja, jb, ovrlp) -> if x `S.member` b then (ja, S.delete x
         -- example: rel "/home/nic/Downloads/" "/mnt/backup/nic/Downloads/" "/home/nic/Downloads/tomato.png" --> "/mnt/backup/nic/Downloads/tomato.png"
         rel:: String -> String
         rel x y fp = y ++ drop (length x) fp
-
--- | The complement to @dirdiff@: returns a set (as a @Trie@) of. Not yet implemented.
-dirsame :: String -> String -> Trie Char ()
-dirsame = undefined
 -}
 
 -- | Test whether files' contents are equal (opens files in binary mode)
@@ -232,14 +229,7 @@ dirsame = undefined
 -- >>> fileEq file1 =<< readSymbolicLink link1
 -- True
 fileEq :: String -> String -> IO Bool
-fileEq a b = do -- TODO: make exception safe!
-    h1 <- openBinaryFile a ReadMode
-    h2 <- openBinaryFile b ReadMode
-    e <- liftA2 (/=) (hGetContents h1) (hGetContents h2)
-    seq e (return ())
-    hClose h1
-    hClose h2
-    return e
+fileEq a b = liftA2 (==) (readFileBinary a) (readFileBinary b)
 
 -- | Dereferences a chain of symbolic links until the actual filesystem object is found, or @Nothing@ if a link is broken
 --
@@ -249,7 +239,7 @@ fileEq a b = do -- TODO: make exception safe!
 realPath :: String -> ExceptT [String] IO String
 realPath = go . pure -- ignore warning "non-exhaustive pattern not matched []"
     where go ss@(s:_) = liftIO (D.doesPathExist s) >>= \case
-            False -> short ss
+            False -> ExceptT . pure $ Left ss
             True -> liftIO (D.pathIsSymbolicLink s) >>= \case
                 False -> return s
                 True -> liftIO (readSymbolicLink s) >>= go . (:ss) -- equal to realPath, but I err on the side of recursion rather than mutual recursion, for optimization.

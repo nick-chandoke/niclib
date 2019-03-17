@@ -2,7 +2,7 @@ author: Nicholas Chandoke
 build-type: Simple
 cabal-version: >=1.10
 bug-reports: https://github.com/nick-chandoke/niclib/issues/new
-copyright: Copyright (c) 2016-2018 Nicholas Chandoke
+copyright: Copyright (c) 2016-2019 Nicholas Chandoke
 description: All kinds of stuff. Just look around. Everything's documented.
 extra-source-files: README.md
 homepage: http://github.com/nick-chandoke/niclib
@@ -13,14 +13,12 @@ name: NicLib
 stability: Stable
 synopsis: nixy's personal lib
 tested-with: GHC ==8.4.3
-version: 0.1.6
+version: 0.1.7
 
 library
   ghc-options: -Wno-type-defaults
   hs-source-dirs: src
   exposed-modules:
-      Control.Monad.Trans.Lookup
-      NicLib.AccumShort
       NicLib.FileSystem
       NicLib.List
       NicLib.Net
@@ -36,34 +34,36 @@ library
   build-depends:
       base > 4 && < 5,
       ListLike,
---    boolean-like,
       bytestring,
       conduit,
       containers,
       data-default,
-      directory,
       exceptions,
-      filepath,
       fgl,
+      filepath,
       ghc-prim,
       http-client,
---    http-conduit,
---    streaming-commons,
       random-fu,
       random-source,
       req,
       req-conduit,
+      rio,
       safe-exceptions,
       store,
-      transformers>=0.5.5.0,
       text,
+      these,
       time,
+      transformers>=0.5.5.0,
       unix,
       uri-bytestring,
-      unordered-containers,
       vector
+--    boolean-like
+--    http-conduit
+--    streaming-commons
   default-extensions:
       ApplicativeDo,
+      Arrows,
+      BangPatterns,
       DataKinds,
       DefaultSignatures,
       DeriveDataTypeable,
@@ -71,13 +71,14 @@ library
       DeriveGeneric,
       FlexibleContexts,
       FlexibleInstances,
-      GADTs
+      GADTs,
       GeneralizedNewtypeDeriving,
       LambdaCase,
       MonadComprehensions,
       MultiParamTypeClasses,
       MultiWayIf,
       NamedFieldPuns,
+      NoImplicitPrelude
       NoMonomorphismRestriction,
       NumDecimals,
       OverloadedLists,

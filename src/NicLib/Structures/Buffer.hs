@@ -24,6 +24,7 @@ module NicLib.Structures.Buffer
 , push
 ) where
 
+import RIO
 import qualified Data.Vector as V
 import Data.Vector.Unboxed (Unbox)
 

@@ -10,6 +10,9 @@ module NicLib.Statistics
 , printRandDist
 ) where
 
+import RIO
+import Prelude (succ)
+
 import Control.Arrow ((&&&), (***), first, second)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Control.Monad.IO.Class

@@ -1,3 +1,4 @@
+{-# language NoBangPatterns #-}
 -- | Structures that reduce memory use by not storing redundant data
 module NicLib.Structures.IndexedSet
 ( IndexedSet
@@ -43,7 +44,7 @@ instance Show a => Show (IndexedSet a) where
 
 infixl 4 !
 (!) :: Ord a => IndexedSet a -> Int -> a
-(IndexedSet {nums}) ! i = nums IM.! i
+IndexedSet {nums} ! i = nums IM.! i
 
 lookup :: Ord a => Int -> IndexedSet a -> Maybe a
 lookup i (IndexedSet {nums}) = IM.lookup i nums

@@ -3,6 +3,7 @@ module NicLib.Time
 ( today
 ) where
 
+import RIO
 import Data.Time.Calendar
 import Data.Time.Clock
 import Control.Monad.IO.Class
