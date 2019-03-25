@@ -1,8 +1,6 @@
--- | Some helpful convenience functions. Note that much of this library has been obsoleted by conduit and safe-exceptions.
+-- | Some helpful convenience functions.
 --
--- Concerning exceptions, this lib used to have everything wrapped in @AccumT@ or @ExceptT@. No longer! After all, exception handling is nuanced and specialized to the particular needs of the program being run. As of NicLib v0.1.3 it's now up to the user to handle (usually accumulating or short-circuiting on) exceptions. Use 'NicLib.AccumShort' or 'Control.Exception.Safe' for this ;)
---
--- Functions like 'ls' and 'mkdir' that may throw predictable exceptions (e.g. directory does not exist, permissions errors) do not have any exception handling done. However, functions that use such functions will account for their exceptions and concatenate them together (e.g. dirdiff will catch all file-not-found, can't-enter-directory, etc. exceptions, logging them in a @StringException@.) I do this because it's expected that any function f that concerns filesystem objects not passed to f as a parameter will probably throw some kind of exception, and we don't want to short-circuit the computation for something so commonplace.
+-- Functions like 'ls' and 'mkdir' that may throw predictable exceptions (e.g. directory does not exist, permissions errors) do not have any exception handling done. However, functions that use such functions will account for their exceptions and concatenate them together (e.g. dirdiff will catch all file-not-found, can't-enter-directory, etc. exceptions, logging them in a @StringException@.) I do this because it's expected that any function f that concerns filesystem objects not passed to f as a parameter will probably throw some kind of exception, and we don't want to short the computation for something so commonplace.
 module NicLib.FileSystem
 ( FilePath(..)
 , concatPaths
@@ -144,7 +142,7 @@ mkdir dir = liftIO $ D.createDirectoryIfMissing True dir
 
 -- | Equivalent to @mkdir -p dir && cd dir@ in bash.
 mkcd :: (MonadIO m, MonadCatch m) => String -> m ()
-mkcd = mkdir &&& cd >*> (*>)
+mkcd = (*>) <$> mkdir <*> cd
 
 -- | Create a symbolic link. (POSIX ONLY!)
 --

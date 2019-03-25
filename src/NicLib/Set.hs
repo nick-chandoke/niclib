@@ -17,22 +17,28 @@ import qualified Data.Set as S
 import qualified Data.Vector as V
 import qualified RIO.Text as T'
 
--- | return minimum element matching a predicate
+-- | Return minimum element matching a predicate
 setFind :: Ord a => (a -> Bool) -> Set a -> Maybe a
 setFind = cT (bool' (Just . S.elemAt 0) (const Nothing) S.null) S.filter
 
--- TODO: I should change partitionBy to return (ListLike full a) => Vector (b, full), rather than Vector (b, Set a); this requires a to implement Ord, but that's not a sensible restriction!
 -- | Group things by a predicate whose domain and codomain both permit an ordering
--- Partition by the first letter:
+--
+-- Example: partition by the first letter:
+--
 -- @partitionBy head ["aardvark", "apple", "banana", "baby", "candy", "dragon", "dragonite", "daring", "zoo", "zooology"]@
--- or, @partitionBy fileExtension <$> listContents "."@ (these functions in NicLib.FileSystem)
--- this is a generalization of Data.List.partition; Data.List.partition a2Bool = partitionBy a2Bool (at least when passing a list rather than a Foldable...)
+--
+-- or, @partitionBy fileExtension \<$\> listContents "."@ (these functions are in 'NicLib.FileSystem')
+--
+-- This is a generalization of @Data.List@'s @partition@:
+--
+-- 1. rather than a predicate, a generalized predicate whose codomain is a type permitting an ordering
+-- 2. domain is a foldable rather than list
 partitionBy :: (Foldable t, Ord a, Ord b) => (a -> b) -> t a -> V.Vector (b, Set a)
 partitionBy f = foldr (\a sets -> maybe (V.cons (f a, S.singleton a) sets) (\i -> sets `V.unsafeUpd` [(i, BiF.second (S.insert a) (sets `V.unsafeIndex` i))]) $ V.findIndex ((== f a) . fst) sets) V.empty
 
 -- | requires an extra Vector to Set conversion, but gives a set
 partitionBy' :: (Foldable t, Ord a, Ord b) => (a -> b) -> t a -> Set (OrderBy b (Set a))
-partitionBy' = cT (foldMap (S.singleton . OrderBy)) partitionBy
+partitionBy' = foldMap (S.singleton . uncurry OrderBy) <% partitionBy
 
 -- | diff a b = (a \\ b, b \\ a, a ∩ b)
 -- Note that diff's runtime efficiency is linear in its first argument, and is not affected by the size of its second argument!

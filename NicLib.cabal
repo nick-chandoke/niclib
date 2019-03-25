@@ -13,7 +13,7 @@ name: NicLib
 stability: Stable
 synopsis: nixy's personal lib
 tested-with: GHC ==8.4.3
-version: 0.1.7
+version: 0.1.8
 
 library
   ghc-options: -Wno-type-defaults
@@ -35,6 +35,7 @@ library
       base > 4 && < 5,
       ListLike,
       bytestring,
+      comonad,
       conduit,
       containers,
       data-default,
@@ -57,7 +58,6 @@ library
       unix,
       uri-bytestring,
       vector
---    boolean-like
 --    http-conduit
 --    streaming-commons
   default-extensions:

@@ -76,9 +76,11 @@ instance (Num a, Ord a) => Monoid (Max' a) where
 
 -- | histogram where bins are single values rather than ranges, i.e. we count occurrences of unique values
 toHist' :: (Ord n, Foldable t) => t n -> S.Set (n, Int) -- I could change Ord n to Eq n, and S.Set (n, Int) to [(n, Int)]
-toHist' = S.map unOrderBy . foldr (\a b -> maybe (S.insert (OrderBy (a, 1)) b) (flip S.insert b . OrderBy . second succ) $ setFindOrd (==a) b) S.empty
+toHist' = S.map unOrderBy . foldr (\a b -> maybe (S.insert (OrderBy a 1) b) (flip S.insert b . uncurry OrderBy . second succ) $ setFindOrd (==a) b) S.empty
     where
         setFindOrd :: (a -> Bool) -> S.Set (OrderBy a b) -> Maybe (a, b)
-        setFindOrd p = fmap unOrderBy . listToMaybe . S.toList . S.filter (p . fst . unOrderBy)
+        setFindOrd p = fmap unOrderBy . listToMaybe . S.toList . S.filter (\case OrderBy x _ -> p x)
+
+        unOrderBy (OrderBy a b) = (a,b)
 
 -- next steps: generalize: use partitionBy more generally, and implement a system for composing filters combinatorially, so that one can filter in a venn-diagram style, or sort-through data to whittle-down to what they're looking for (building a scraper incrementially. remember that a scraper is merely a thing that identifies a particular subset from a given set (the given set will likely have to satisfy some predicates that validate the sensibility of the scraper.)

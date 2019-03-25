@@ -227,7 +227,7 @@ mmCommon f = go LL.empty where
 
 -- | You'll probably need to specify the type of ListLike, e.g. (toSet trie :: Set String)
 toSet :: (ListLike full a, Ord a, Ord full) => Trie a tag -> S.Set (OrderBy full tag)
-toSet = foldr (curry $ S.insert . OrderBy) S.empty
+toSet = foldr (S.insert <% OrderBy) S.empty
 
 toList :: (ListLike full a, Ord a, Ord full, Ord tag) => Trie a tag -> [(full, tag)]
 toList = foldr ((:) <% (,)) []
