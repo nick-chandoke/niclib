@@ -4,6 +4,7 @@ module NicLib.Set
 , partitionBy'
 , diff
 , showDiff
+, showDiffAsHtml
 ) where
 
 import Data.Align (Align, padZipWith)
@@ -74,3 +75,15 @@ showDiff h1 h2 ( (h1:) . S.toList -> a
     -- notably an endomorphism
     mergeLists :: (Align f) => Int -> Int -> f T'.Text -> f T'.Text -> f T'.Text
     mergeLists ll padding = padZipWith (\(fromMaybe mempty -> a) (fromMaybe mempty -> b) -> a <> T'.replicate (ll - T'.length a + padding) " " <> b)
+
+-- honestly there should be a ZipList-like Applicative that acts like Align (i.e. with padding)
+-- maybe I'll implement that sometime later
+-- | Converts a diff of @Text@s into a \<table\>, ready for pretty display in a web browser
+showDiffAsHtml :: T'.Text -- ^ column 1 heading
+               -> T'.Text -- ^ column 3 heading
+               -> (Set T'.Text, Set T'.Text, Set T'.Text) -- ^ diffs
+               -> T'.Text -- ^ output html
+showDiffAsHtml h1 h2 (S.toList -> a, S.toList -> b, S.toList -> c) =
+    let ab  = padZipWith (\(fromMaybe mempty -> a) (fromMaybe mempty -> b) -> "<td>" <> a <> "</td><td>" <> b <> "</td>") a b
+        abc = padZipWith (\(fromMaybe "<td></td><td></td>" -> ab) (fromMaybe mempty -> c) -> "<tr>" <> ab <> "<td>" <> c <> "</td></tr>") ab c
+    in "<table><thead><tr><td>" <> h1 <> "</td><td>" <> h2 <> "</td><td>Both</td></tr></thead><tbody>" <> fold abc <> "</tbody></table>"
