@@ -16,7 +16,7 @@ import RIO.Set (Set)
 import qualified Data.Bifunctor as BiF
 import qualified Data.Set as S
 import qualified Data.Vector as V
-import qualified RIO.Text as T'
+import qualified RIO.Text as T
 
 -- | Return minimum element matching a predicate
 setFind :: Ord a => (a -> Bool) -> Set a -> Maybe a
@@ -51,10 +51,10 @@ diff a b = S.foldr (\x (ja, jb, ovrlp) -> if x `S.member` b then (ja, S.delete x
 --       also I could reformulate this to calculate by-column rather than folding columns together, then computing after each fold
 --          notably using longestC is just plain lazy; I should calculate that using sums of columns
 -- | Converts a diff of @Text@s into a table, ready for pretty display in a terminal
-showDiff :: T'.Text -- ^ column 1 heading
-         -> T'.Text -- ^ column 3 heading
-         -> (Set T'.Text, Set T'.Text, Set T'.Text) -- ^ diffs
-         -> T'.Text
+showDiff :: T.Text -- ^ column 1 heading
+         -> T.Text -- ^ column 3 heading
+         -> (Set T.Text, Set T.Text, Set T.Text) -- ^ diffs
+         -> T.Text
 showDiff h1 h2 ( (h1:) . S.toList -> a
                , (h2:) . S.toList -> b
                , ("Both":) . S.toList -> c) =
@@ -64,25 +64,25 @@ showDiff h1 h2 ( (h1:) . S.toList -> a
         abc = mergeLists longestAB padding ab c
         longestC = longestLen abc
     in case abc of
-        (h:ts) -> T'.unlines (h:T'.replicate longestC "─":ts)
+        (h:ts) -> T.unlines (h:T.replicate longestC "─":ts)
   where
     padding :: Int
     padding = 3
 
-    longestLen :: [T'.Text] -> Int
-    longestLen = maximum . map T'.length
+    longestLen :: [T.Text] -> Int
+    longestLen = maximum . map T.length
 
     -- notably an endomorphism
-    mergeLists :: (Align f) => Int -> Int -> f T'.Text -> f T'.Text -> f T'.Text
-    mergeLists ll padding = padZipWith (\(fromMaybe mempty -> a) (fromMaybe mempty -> b) -> a <> T'.replicate (ll - T'.length a + padding) " " <> b)
+    mergeLists :: (Align f) => Int -> Int -> f T.Text -> f T.Text -> f T.Text
+    mergeLists ll padding = padZipWith (\(fromMaybe mempty -> a) (fromMaybe mempty -> b) -> a <> T.replicate (ll - T.length a + padding) " " <> b)
 
 -- honestly there should be a ZipList-like Applicative that acts like Align (i.e. with padding)
 -- maybe I'll implement that sometime later
 -- | Converts a diff of @Text@s into a \<table\>, ready for pretty display in a web browser
-showDiffAsHtml :: T'.Text -- ^ column 1 heading
-               -> T'.Text -- ^ column 3 heading
-               -> (Set T'.Text, Set T'.Text, Set T'.Text) -- ^ diffs
-               -> T'.Text -- ^ output html
+showDiffAsHtml :: T.Text -- ^ column 1 heading
+               -> T.Text -- ^ column 3 heading
+               -> (Set T.Text, Set T.Text, Set T.Text) -- ^ diffs
+               -> T.Text -- ^ output html
 showDiffAsHtml h1 h2 (S.toList -> a, S.toList -> b, S.toList -> c) =
     let ab  = padZipWith (\(fromMaybe mempty -> a) (fromMaybe mempty -> b) -> "<td>" <> a <> "</td><td>" <> b <> "</td>") a b
         abc = padZipWith (\(fromMaybe "<td></td><td></td>" -> ab) (fromMaybe mempty -> c) -> "<tr>" <> ab <> "<td>" <> c <> "</td></tr>") ab c

@@ -1,9 +1,9 @@
--- | Some helpful convenience functions.
---
--- Functions like 'ls' and 'mkdir' that may throw predictable exceptions (e.g. directory does not exist, permissions errors) do not have any exception handling done. However, functions that use such functions will account for their exceptions and concatenate them together (e.g. dirdiff will catch all file-not-found, can't-enter-directory, etc. exceptions, logging them in a @StringException@.) I do this because it's expected that any function f that concerns filesystem objects not passed to f as a parameter will probably throw some kind of exception, and we don't want to short the computation for something so commonplace.
+-- | Helpful functions
 module NicLib.FileSystem
-( FilePath(..)
+( -- * Canonical FilePaths
+  FilePath(..)
 , concatPaths
+-- * Bash-like File Functions
 , mkdir
 , mkcd
 , ln
@@ -11,11 +11,12 @@ module NicLib.FileSystem
 , ls
 , mv
 , mvt
-, cp
+, cpFile
 , cpWithMetadata
 , cpWithPermissions
 , nextDuplicateFileName
 , pathOrNextDuplicate
+-- * Filepaths
 , fileExtension
 , withExtension
 , dirAndBase
@@ -51,7 +52,7 @@ import System.FilePath (pathSeparator)
 import System.Posix.Files (createSymbolicLink, readSymbolicLink)
 import qualified Data.ListLike as LL
 -- import qualified RIO.Set as S -- *
--- import qualified RIO.Text as T' -- *
+-- import qualified RIO.Text as T -- *
 import qualified Prelude
 import qualified RIO.Directory as D
 
@@ -64,7 +65,7 @@ instance Monoid FilePath where
     mappend = FilePath <% (concatPaths pathSeparator) `on` unwrapFilePath
 instance Semigroup FilePath where (<>) = mappend -- GHC < 8.4.1 compat
 
--- | Function used to append two paths with exactly one separator between them
+-- | Append two paths with exactly one separator between them
 concatPaths :: (LL.ListLike full item, Eq item) => item -> full -> full -> full
 concatPaths s a b
     | LL.null a = b
@@ -80,14 +81,14 @@ ls :: MonadIO m => String -> m [String]
 ls = liftIO . D.listDirectory
 
 -- | creates parent directories as necessary
-mv, cp, cpWithMetadata, cpWithPermissions :: (MonadIO m, MonadCatch m) => String -> String -> m ()
+mv, cpFile, cpWithMetadata, cpWithPermissions :: (MonadIO m, MonadCatch m) => String -> String -> m ()
 mv = withNewDir (cT liftIO D.renameFile)
-cp = withNewDir (cT liftIO D.copyFile)
+cpFile = withNewDir (cT liftIO D.copyFile)
 cpWithMetadata = withNewDir (cT liftIO D.copyFileWithMetadata)
 cpWithPermissions = withNewDir (cT liftIO D.copyPermissions)
 
 -- creates a destination directory if it doesn't already exist, then performs an action
--- helper (non-exported) method for mv, cp, &c
+-- helper (non-exported) method for mv, cpFile, &c
 withNewDir :: (MonadCatch m, MonadIO m) => (a -> String -> m b) -> a -> String -> m b
 withNewDir f a b@(dirname -> b') = (null b' ? return () ↔ mkdir b') >> f a b
 
@@ -124,16 +125,13 @@ fileExtension :: String -> String
 fileExtension s = if '.' `elem` s then ('.':) . reverse . takeWhile (/='.') $ reverse s else empty
 
 -- | Replace a file's extension if it has one; add one if it doesn't.
-
--- Do not include the dot.
---
--- >>> "/path/to/file.png" `withExtension` "txt"
--- "/path/to/file.txt"
 --
 -- >>> "file.png" `withExtension` "txt"
 -- "file.txt"
-withExtension :: String -> String -> String
-withExtension s ext = case breakAtLast '.' s of
+withExtension :: String -- ^ filepath
+              -> String -- ^ extension to add (do not include a leading dot)
+              -> String
+withExtension (breakAtLast '/' -> (d,s)) ext = d <> case breakAtLast '.' s of
     ("",_) -> s ++ '.':ext
     (a,_) -> a ++ ext
 
@@ -146,18 +144,18 @@ mkcd = (*>) <$> mkdir <*> cd
 
 -- | Create a symbolic link. (POSIX ONLY!)
 --
--- Same order as 'cp': @ln src (Just dest)@ will create a link called dest that points to @src@.
+-- Same order as 'cpFile': @ln src (Just dest)@ will create a link called dest that points to @src@.
 --
 -- __It is not assumed that @src@ exists!__ You must check this yourself.
 --
 -- Also, it's recommended that you use 'System.Directory.makeAbsolute' on @src@ if you're linking to a target in a different directory!
 --
--- For instance, @ln "file" (Just "../ln-to-file")@ will successfully create a link called @ln-to-file@ in the parent directory that points to "file" which, by omission of an absolute path, assumes the "current directory," i.e. the parent directory, and thus you would be creating a link to "../file", despite the /actual/ destination being "./file"
+-- For instance, @ln "file" (Just "../ln-to-file")@ will successfully create a link called @ln-to-file@ in the parent directory that points to "file" which, by omission of an absolute path, assumes the "current directory," i.e. the parent directory, and thus you would be creating a link to "..\/file", despite the /actual/ destination being "./file"
 --
 -- @ln src Nothing@ will create a link with the basename of @src@ in the working directory.
 ln :: (MonadIO m, MonadCatch m) => String -> Maybe String -> m ()
 ln src = withNewDir (cT liftIO createSymbolicLink) src . \case
-    Nothing -> "./" ++ basename src -- (1) TODO: make work for non-POSIX pathnames
+    Nothing -> "./" ++ basename src
     Just d -> case breakAtLast pathSeparator d of ("", _) -> "./" ++ d; _ -> d -- (1) here too
 -- note: we add "./" because, for some reason, an exception is thrown if dest is a relative directory: "changeWorkingDirectory: does not exist (No such file or directory)". We can easily get around this error by prefixing the destination path with "./"
 
@@ -202,7 +200,7 @@ dirdiff :: String -> String -> ReaderT (IORef (Seq Text)) _ (Trie Char (), Trie 
 dirdiff (forceTrailingSep -> a) (forceTrailingSep -> b) = do
     ref <- ask
     let pushToLog :: MonadResource m => IOError -> ConduitT i o m ()
-        pushToLog e = liftIO $ modifyIORef' ref (|> (T'.pack $ show e)) -- atomicity isn't important here
+        pushToLog e = liftIO $ modifyIORef' ref (|> (T.pack $ show e)) -- atomicity isn't important here
     handleC pushToLog $ do
         sourceDirectoryDeep False a .| (\x -> whenM doesFileExist (rel a b x))
         sourceDirectoryDeep False b
@@ -239,5 +237,5 @@ realPath = go . pure -- ignore warning "non-exhaustive pattern not matched []"
     where go ss@(s:_) = liftIO (D.doesPathExist s) >>= \case
             False -> ExceptT . pure $ Left ss
             True -> liftIO (D.pathIsSymbolicLink s) >>= \case
-                False -> return s
+                False -> pure s
                 True -> liftIO (readSymbolicLink s) >>= go . (:ss) -- equal to realPath, but I err on the side of recursion rather than mutual recursion, for optimization.

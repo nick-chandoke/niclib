@@ -21,11 +21,11 @@ import Data.Random.Source.DevRandom
 import NicLib.NStdLib
 import NicLib.Set
 import qualified Data.Set as S
-import qualified Data.Text.Lazy as T
-import qualified Data.Text.Lazy.IO as TLIO
+import qualified RIO.Text as T
+import qualified Data.Text.IO as TIO
 
 printRandDist :: Int -> RVar Double -> IO ()
-printRandDist i d = randDist S.singleton i d >>= TLIO.putStrLn . showHist . toHist Nothing
+printRandDist i d = randDist S.singleton i d >>= TIO.putStrLn . showHist . toHist Nothing
 
 -- | a random distribution, i.e. a set of randomly generated floats, of cardinality n
 -- e.g. randDist 1300 (exponential 16)
@@ -42,13 +42,17 @@ randDist l i r = replicateM' i $ l <$> runRVar r DevURandom -- DevURandom genera
 -- TODO: change floor to round to n digits
 showHist :: (Foldable t, RealFrac n, Show n) => t ((n, n), Int) -> T.Text
 showHist xs = case getMax' $ foldMap (Max' . length . printRange . both floor . fst) xs of -- actually, the last element should be the longest, assuming all elements have the same number of decimal digits
-    (fromIntegral -> maxInXS) -> T.unlines $ foldMap (\((T.pack &&& fromIntegral . length) . printRange . both floor -> (t, l), fromIntegral -> numInBin) -> [t <> (T.take (maxInXS - l) (T.repeat ' ')) <> T.cons ' ' (T.take numInBin (T.repeat '◼'))]) xs
-    where
-        printRange (a, b) = show a ++ '~':(show b)
+    (fromIntegral -> maxInXS) ->
+        let go ((T.pack &&& fromIntegral . length) . printRange . both floor -> (t, l), fromIntegral -> numInBin) = [t <> T.replicate (maxInXS - l) " " <> T.cons ' ' (T.replicate numInBin "◼")]
+        in T.unlines $ foldMap go xs
+  where
+      printRange (a, b) = show a ++ '~':(show b)
 
 showHist' :: (Foldable t, Show a) => t (a, Int) -> T.Text
 showHist' xs = case getMax' $ foldMap (Max' . length . show . fst) xs of -- actually, the last element should be the longest, assuming all elements have the same number of decimal digits
-    (fromIntegral -> maxInXS) -> T.unlines $ foldMap (\((T.pack &&& fromIntegral . length) . show -> (t, l), fromIntegral -> numInBin) -> [t <> (T.take (maxInXS - l) (T.repeat ' ')) <> T.cons ' ' (T.take numInBin (T.repeat '◼'))]) xs
+    (fromIntegral -> maxInXS) ->
+        let go ((T.pack &&& fromIntegral . length) . show -> (t, l), fromIntegral -> numInBin) = [t <> T.replicate (maxInXS - l) " " <> T.cons ' ' (T.replicate numInBin "◼")]
+        in T.unlines $ foldMap go xs
 
 -- number of bins is determined by variance of distribution if Nothing is passed; else one may manually specify the number of bins
 -- number of bins may be fewer than you requested, if the top bins aren't filled

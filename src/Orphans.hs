@@ -7,6 +7,7 @@
 -- A collection of orphan instances
 module Orphans () where
 
+import RIO
 import Control.Monad (liftM)
 import Data.Binary (Binary, put, get, Get)
 import Data.Time.Calendar (Day (ModifiedJulianDay), toModifiedJulianDay)
@@ -40,4 +41,3 @@ instance Binary Cookie where
 instance Binary CookieJar where
     put = put . destroyCookieJar
     get = liftM createCookieJar get
-

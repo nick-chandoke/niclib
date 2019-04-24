@@ -170,13 +170,13 @@ intercalate ins = go
 
 -- Q: why isn't every ListLike a FoldableLL defaulted by uncons?
 {- Possibly relevant functions (that don't have trivial implementations, like compareLength or toUpper) in Text yet to be added to ListLike, StringLike, or FoldableLL:
-T'.breakOnAll -- why would anyone use this instead of splitOn?
-T'.mapAccumL, T'.mapAccumR
-T'.scanl, T'.scanl1, T'.scanr T'.scanr1
+T.breakOnAll -- why would anyone use this instead of splitOn?
+T.mapAccumL, T.mapAccumR
+T.scanl, T.scanl1, T.scanr T.scanr1
 
 -- Operations that require traversing from the end:
-T'.stripEnd
-T'.breakOnEnd
-T'.dropAround, T'.dropEnd, T'.takeEnd, T'.takeWhileEnd
-T'.unsnoc
+T.stripEnd
+T.breakOnEnd
+T.dropAround, T.dropEnd, T.takeEnd, T.takeWhileEnd
+T.unsnoc
 -}

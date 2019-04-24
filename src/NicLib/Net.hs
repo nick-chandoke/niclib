@@ -1,5 +1,4 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# language ScopedTypeVariables #-}
 
 -- | A more approachable API to @uri-bytestring@ and @req@. Import this instead of @uri-bytestring@ or @req@. And nota bene: /req/ is both the name of a package, and the premier function it exports.
 --
@@ -137,10 +136,10 @@ import Control.Applicative (liftA2)
 
 -- text
 import RIO.Text (Text, decodeUtf8')
-import qualified RIO.Text as T'
+import qualified RIO.Text as T
 
 -- NicLib
-import NicLib.NStdLib (both, liftME)
+import NicLib.NStdLib (both, liftME, (<||>))
 import NicLib.FileSystem (concatPaths)
 
 -- bytestring
@@ -179,14 +178,14 @@ instance MonadHttp _ where
         where
     exceptionToErrorMsg :: Network.HTTP.Client.HttpException -> (Bool, Text)
     exceptionToErrorMsg i = \case
-        HttpExceptionRequest req content -> second (\message -> T'.unlines ["HTTP Exception: (" <> pnn i <> " attempt)", indent 4 message, "for the following request:", indent 4 . T'.pack $ show req])
+        HttpExceptionRequest req content -> second (\message -> T.unlines ["HTTP Exception: (" <> pnn i <> " attempt)", indent 4 message, "for the following request:", indent 4 . T.pack $ show req])
             (case content of
                 ConnectionClosed                       -> (False, "Attempted to use an already closed Network.HTTP.Client.Internal Connection")
-                ConnectionFailure cfe                  -> (True, "Connection failure: " <> T'.pack (show cfe)) -- TODO: not sure if this should be False
+                ConnectionFailure cfe                  -> (True, "Connection failure: " <> T.pack (show cfe)) -- TODO: not sure if this should be False
                 ConnectionTimeout                      -> (True, "Timed-out trying to connect to server")
-                HttpZlibException (ZlibException code) -> (False, "Problem inflating response body (code " <> T'.pack (show code) <> "). Consult zlib(3) or other docs.")
+                HttpZlibException (ZlibException code) -> (False, "Problem inflating response body (code " <> T.pack (show code) <> "). Consult zlib(3) or other docs.")
                 IncompleteHeaders                      -> (False, "Incomplete set of headers") -- how does it know it's incomplete?
-                InternalException ie                   -> (False, "Internal exception: " <> T'.pack (show ie))
+                InternalException ie                   -> (False, "Internal exception: " <> T.pack (show ie))
                 InvalidChunkHeaders                    -> (False, "Invalid chunk header!")
                 InvalidDestinationHost h               -> (False, "Tried connecting to an invalid host (" <> decodeUtf8' h <> ")")
                 InvalidHeader s                        -> (False, "Could not parse header: " <> decodeUtf8' s)
@@ -195,19 +194,19 @@ instance MonadHttp _ where
                 InvalidStatusLine s                    -> (False, "Unknown response status: " <> decodeUtf8' s) -- a status line is the HTTP response status code plus the "reason phrase", e.g. "OK" or "Not Found"
                 NoResponseDataReceived                 -> (True, "No response data from server at all. Was a connection closed prematurely?")
                 OverlongHeaders                        -> (False, "Header too long in server response")
-                ProxyConnectException bs code status   -> (False, "HTTP response " <> T'.pack (show code) <> " (" <> decodeUtf8' (statusMessage status) <> ") when trying to connect to proxy\n" <> decodeUtf8' bs)
-                ResponseBodyTooShort a b               -> (False, "Request body unexpected size (too Left); expected " <> T'.pack (show a) <> " but received" <> T'.pack (show b))
+                ProxyConnectException bs code status   -> (False, "HTTP response " <> T.pack (show code) <> " (" <> decodeUtf8' (statusMessage status) <> ") when trying to connect to proxy\n" <> decodeUtf8' bs)
+                ResponseBodyTooShort a b               -> (False, "Request body unexpected size (too Left); expected " <> T.pack (show a) <> " but received" <> T.pack (show b))
                 ResponseTimeout                        -> (True, "Timed-out waiting for server's response")
-                StatusCodeException resp bs            -> (False, T'.unlines ["non-2** response:", indent 4 $ T'.pack (show resp), indent 4 (decodeUtf8' bs)])
+                StatusCodeException resp bs            -> (False, T.unlines ["non-2** response:", indent 4 $ T.pack (show resp), indent 4 (decodeUtf8' bs)])
                 TlsNotSupported                        -> (False, "Manager doesn't support TLS. Are you using tlsManagerSettings from http-client-tls?")
                 TooManyRedirects resps                 ->
-                    let v = fst $ foldr (\(T'.pack . show -> resp) (b,acc) -> ("Response #" <> T'.pack (show acc) <> ":" <> (indent 4 resp) <> b, succ acc :: Int)) (mempty,0) resps
-                    in (False, "Too Many Redirects (" <> (T'.pack . show $ length resps) <> "):" <> v)
-                WrongRequestBodyStreamSize a b         -> (False, "Request body unexpected size; expected " <> T'.pack (show a) <> " but received " <> T'.pack (show b))
+                    let v = fst $ foldr (\(T.pack . show -> resp) (b,acc) -> ("Response #" <> T.pack (show acc) <> ":" <> (indent 4 resp) <> b, succ acc :: Int)) (mempty,0) resps
+                    in (False, "Too Many Redirects (" <> (T.pack . show $ length resps) <> "):" <> v)
+                WrongRequestBodyStreamSize a b         -> (False, "Request body unexpected size; expected " <> T.pack (show a) <> " but received " <> T.pack (show b))
             )
-        InvalidUrlException url reason -> (False, (T'.pack url) <> " is malformed because: " <> (T'.pack reason))
+        InvalidUrlException url reason -> (False, (T.pack url) <> " is malformed because: " <> (T.pack reason))
     pnn :: Int -> Text
-    pnn (show -> n) = T'.pack $ n <> case last n of
+    pnn (show -> n) = T.pack $ n <> case last n of
         '1' -> "st"
         '2' -> "nd"
         '3' -> "rd"
@@ -224,17 +223,16 @@ parseURI s = let rel = either Left (pure . Left) $ parseRelativeRef laxURIParser
     Left (MalformedScheme MissingColon) -> rel
     Left (MalformedScheme NonAlphaLeading) -> rel
     Left o -> Left o
-    Right r -> pure . Right $ r {uriPath = let p = uriPath r in if BSC'.null p then "/" else p}
+    Right r -> pure . Right $ r {uriPath = replIf BSC'.null (uriPath r) "/"}
 
 -- | Produce an absolute URL from a @parseURI@ value
 relTo :: URIRef a -> URIRef Absolute -> URIRef Absolute
 parsed `relTo` (URI {..}) = case parsed of -- URI and RelativeRef have different field names, so wildcards are safe
-    RelativeRef {..} -> URI -- make parsed relative to the absolute URIRef
-        uriScheme
-        uriAuthority
-        (if "/" `BSC'.isPrefixOf` rrPath then rrPath else concatPaths 0x2F uriPath (if "./" `BSC'.isPrefixOf` rrPath || "../" `BSC'.isPrefixOf` rrPath then rrPath else "../" <> rrPath))
-        rrQuery
-        rrFragment
+    RelativeRef {..} ->
+        let withDots = replIf (not . (("./" `BSC'.isPrefixOf`) <||> ("../" `BSC'.isPrefixOf`))) rrPath ("../" <> rrPath)
+            !rrPath' = replIf (not . ("/" `BSC'.isPrefixOf`)) rrPath
+                     $ concatPaths 0x2F uriPath withDots
+        in URI uriScheme uriAuthority rrPath' rrQuery rrFragment
     a@(URI _ _ _ _ _) -> a -- parsed was absolute already; keep as-is
 
 -- | Inherit scheme and/or domain from a given absolute url. Convenience function built atop 'parseURI' and 'relTo'.
@@ -242,12 +240,16 @@ parseRelTo :: URIRef Absolute -> BS'.ByteString -> Either URIParseError (URIRef 
 parseRelTo base bs
     | BSC'.null bs = Left (OtherError "parsing a null relative path is nonsensical")
     | otherwise =
-        let bs' = if "//" `BS'.isPrefixOf` bs then U.schemeBS (uriScheme base) <> ":" <> bs else bs
+        let bs' = replIf ("//" `BS'.isPrefixOf`) bs (U.schemeBS (uriScheme base) <> ":" <> bs)
         in case parseURI bs' of
             Left l -> Left l
             Right x -> pure $ either (`relTo` base) id x
 
--- | 'reqBr' with 'getHttpResponse'. Left here in case it's useful, perhaps for JSON consumption, if there're no JSON conduit libraries. Usually use 'reqBc', through; any I/O should be done via Conduit.
+-- | Useful for 'bsResponse' or 'ignoreResponse'. Remember that a response includes HTTP status, headers, and cookies as well as the body; use 'responseBody' to get the body.
+--
+-- Do not use 'jsonResponse'; its implementation of 'getHttpResponse' uses 'throwIO' on JSON parse failure (and uses lazy @eitherDecode@.) Instead, it's better to use @eitherDecode' . bsResponse@ yourself.
+--
+-- Also, do not use @lbsResponse@; use 'reqBc' instead.
 req :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpResponse response, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
     => method
     -> URIRef Absolute
@@ -257,7 +259,7 @@ req :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpRespons
     -> m response
 req m uri body p opts = reqHelper opts uri $ \(u,o) -> Req.req m u body p o
 
--- | Uses 'responseBodySource' to consume HTTP response body. 'BsResponse', 'IgnoreResponse', and 'JsonResponse' all work with this, as each instances 'HttpResponse'.
+-- | Consume HTTP response body via Conduit (wrapper around req-conduit's 'responseBodySource', that's easier to use, and obviously, that works with 'URIRef's)
 reqBc :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
       => method
       -> URIRef Absolute
@@ -268,7 +270,6 @@ reqBc :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpBodyA
 reqBc m uri body opts consumer = reqHelper opts uri $ \(u,o) ->
     Req.reqBr m u body (o <> opts) (\respBodyReader -> runConduitRes $ responseBodySource respBodyReader .| consumer)
 
--- | Low-level. Use at your own risk. Left here because it's easy to write, so we may as well make it available here (not re-exported because takes a @URIRef Absolute@ rather than a @Url s@)
 req' :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
      => method
      -> URIRef Absolute
@@ -314,7 +315,7 @@ uriToUrl (URI {uriScheme, uriAuthority, uriPath, uriQuery}) = case uriAuthority 
             host <- decode (hostBS ah)
             gOpts <- (GOpt (maybe mempty (port . portNumber) authorityPort) <>)
                 <$> foldMapM
-                    (uncurry (liftA2 (\k v -> GOpt $ if T'.null v then queryFlag k else k =: v)) . both decode)
+                    (uncurry (liftA2 (\k v -> GOpt $ if T.null v then queryFlag k else k =: v)) . both decode)
                     (queryPairs uriQuery)
             case authorityUserInfo of
                 Nothing ->
@@ -331,3 +332,10 @@ uriToUrl (URI {uriScheme, uriAuthority, uriPath, uriQuery}) = case uriAuthority 
 -- | Runs 'parseURI' then pulls-out uri, assuming that it's absolute and well-formed
 unsafeParseURI :: BSC'.ByteString -> URIRef Absolute
 unsafeParseURI = (\case Right (Right x) -> x) . parseURI
+
+-- | Replace a value if predicate holds over it; else return the same object
+--
+-- Useful for incremental modifications to a variable to ensure that it is well-formed
+replIf :: (a -> Bool) -> a -> a -> a
+replIf p a e = if p a then e else a
+{-# INLINE replIf #-}
