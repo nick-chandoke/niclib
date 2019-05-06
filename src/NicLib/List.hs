@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
+
 -- | Operations that I want to merge into the <http://hackage.haskell.org/package/ListLike ListLike> package, but haven't yet (before doing that I want ListLike to be in terms of type families rather than func deps, so that both char8 bytestring and word8 bytestring can both be listlike's)
 module NicLib.List
 ( breakAtLast

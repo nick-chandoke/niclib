@@ -9,7 +9,6 @@ module NicLib.Text
 import RIO
 import Prelude (succ)
 
-import Data.Word
 import qualified Data.ListLike as LL
 import qualified Data.ListLike.String as LLS
 import qualified RIO.Text as T

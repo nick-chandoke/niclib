@@ -18,7 +18,6 @@ import Prelude (succ)
 import Control.Arrow ((***), second, (|||), (>>>))
 import Control.Monad (guard)
 import Data.Char (isSpace)
-import Data.Foldable
 import Data.List (uncons)
 import Data.Semigroup (mtimesDefault)
 
@@ -36,10 +35,11 @@ import qualified Data.Bifunctor as BiF -- bifunctors
 import qualified Data.ListLike as LL -- ListLike
 
 -- text
+import Data.Text (Text)
 import qualified Data.Text as T
 
 -- fgl
-import Data.Graph.Inductive.Graph hiding (empty)
+import Data.Graph.Inductive.Graph hiding (empty, edges)
 
 data Rel = Child | Sibling | Parent deriving (Show, Eq, Ord)
 
@@ -83,7 +83,7 @@ toGraph c s = (\(_,vs,es) -> mkGraph vs es) . toGraph' 0 c s
 --
 -- @
 -- :m + Text.Dot Data.Graph.Inductive.Dot Data.Graph.Inductive.Graph Data.Graph.Inductive.PatriciaTree
--- TIO.readFile "/home/nic/multiTree.txt" >>= writeFile "/home/nic/multiTree.gv" . showDot . (fglToDot :: Gr T.Text Rel -> Dot ()) . multiTreeToGraph
+-- TIO.readFile "/home/nic/multiTree.txt" >>= writeFile "/home/nic/multiTree.gv" . showDot . (fglToDot :: Gr Text Rel -> Dot ()) . multiTreeToGraph
 -- @
 --
 -- Then in bash, @dot -Tsvg -O multiTree.gv@. This produces this lovely graphic:
@@ -130,11 +130,13 @@ toGraph' i0 directUp directSibs = \(Node r rs) -> case go (i0 + 1, mempty, mempt
             [(i,j,Sibling), (j,i,Sibling)]
 
 -- | Create a text readable by 'readIndentedText'
-showIndented :: (a -> T.Text) -- ^ convert item to text
+showIndented :: forall a
+              . (a -> Text) -- ^ convert item to text
              -> Tree a
-             -> T.Text
+             -> Text
 showIndented toText = T.init . go 0 -- init ∵ go leaves a trailing newline. Works fine on singleton trees, too.
     where
+        go :: Int -> Tree a -> Text
         go indentation (Node (toText -> a) xs) = mtimesDefault (4 * indentation) " " <> a <> "\n" <> foldMap (go (succ indentation)) xs
 
 -- types used in readIndentedGeneral
@@ -146,10 +148,10 @@ type LvlNode i a = (i, Tree a)
 --
 --  The return type is natural of the computation; use 'sequenceA' to convert to @Either Text (Seq (Tree b))@. If you do, consider that this @sequenceA@ is non-isomorphic, despite being a bijection.
 readIndentedGeneral :: (Integral i, LL.ListLike t a)
-                    => (a -> T.Text) -- ^ function to convert input to strict text for output error messages (you may want to use a whitespace stripping function in there)
+                    => (a -> Text) -- ^ function to convert input to strict text for output error messages (you may want to use a whitespace stripping function in there)
                     -> (a -> Either b (i, b)) -- ^ @Right@ (length, item to put into tree node); or @Left@ for elements that aren't a part of the tree structure, but need to be included nonetheless, /e.g./ when parsing an HTML document's heading (e.g. h1, h2) elements into a tree, there may be html in-between that doesn't affect the heading hierarchy, that you nonetheless want to include in the tree; these non-hierarchy-affecting elements inherit the last-read hierarchy level.
                     -> t -- ^ input to process
-                    -> Seq (Either T.Text (Tree b))
+                    -> Seq (Either Text (Tree b))
 readIndentedGeneral toErrMsg ((fmap (second pure) .) -> textToPair) is = pure . Left ||| uncurry go . BiF.first pure $ do
     (root, ts) <- liftME "Cannot parse a tree from an empty list of nodes!" $ LL.uncons is
     p <- BiF.first (const "First line must parse into the tree's root; could not derive node level and value from first line.") $ textToPair root -- Nothing nodes are always siblings ↔ Nothing nodes must have a parent ↔ a Nothing node cannot be a root
@@ -175,7 +177,7 @@ readIndentedGeneral toErrMsg ((fmap (second pure) .) -> textToPair) is = pure . 
                                 (listToBranch -> (_,z), parent:ancestors) -> go (p' : second (z `putInTree`) parent : ancestors) ts
                                            -- this^ blank should equal i'
 
-        close :: [LvlNode i b] -> Seq (Either T.Text (Tree b))
+        close :: [LvlNode i b] -> Seq (Either Text (Tree b))
         close = pure . fmap (snd . listToBranch) . pure
 
         -- | A left-to-right list of nodes becomes a bottom-to-top hierarchy. The terminal object's integral is the rightmost integral of the list (and is thus a minimum of the input list's fst's.)
@@ -211,5 +213,5 @@ readIndentedGeneral toErrMsg ((fmap (second pure) .) -> textToPair) is = pure . 
 -- Returns either a parsing error message or a tree
 --
 -- Note that 'readIndented' morphism and input arguments are lazy text, but it returns strict text in its Left constructor.
-readIndentedText :: (T.Text -> a) -> T.Text -> Seq (Either T.Text (Tree a))
+readIndentedText :: (Text -> a) -> Text -> Seq (Either Text (Tree a))
 readIndentedText toR = readIndentedGeneral (T.stripStart) (pure . (T.length *** toR) . T.span isSpace) . T.lines

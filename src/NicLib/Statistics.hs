@@ -15,7 +15,6 @@ import Prelude (succ)
 
 import Control.Arrow ((&&&), (***), first, second)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Control.Monad.IO.Class
 import Data.Random
 import Data.Random.Source.DevRandom
 import NicLib.NStdLib
@@ -46,6 +45,7 @@ showHist xs = case getMax' $ foldMap (Max' . length . printRange . both floor . 
         let go ((T.pack &&& fromIntegral . length) . printRange . both floor -> (t, l), fromIntegral -> numInBin) = [t <> T.replicate (maxInXS - l) " " <> T.cons ' ' (T.replicate numInBin "◼")]
         in T.unlines $ foldMap go xs
   where
+      printRange :: (Int, Int) -> String
       printRange (a, b) = show a ++ '~':(show b)
 
 showHist' :: (Foldable t, Show a) => t (a, Int) -> T.Text
@@ -61,7 +61,7 @@ showHist' xs = case getMax' $ foldMap (Max' . length . show . fst) xs of -- actu
 -- BUG: toHist _ <$> randDist S.singleton 1 (exponential _) hangs, even though the RHS of <$> evaluates fine
 toHist :: (RealFloat n, Foldable t) => Maybe Int -> t n -> S.Set ((n, n), Int)
 toHist (fromMaybe 20 -> numBins) dist = case (uncurry (-) . (getMax' *** getMin') $ foldMap (Max' &&& Min') dist) / fromIntegral numBins of -- binSize :: n
-    binSize -> S.map (first ((id &&& (+binSize)) . (*binSize) . fromIntegral)) $ foldMap (S.singleton . second S.size) $ partitionBy (floor . (/binSize)) dist -- partition/sort data into bins, then replace bin indicies with value ranges
+    binSize -> S.map (first ((id &&& (+binSize)) . (*binSize) . fromIntegral @Int)) $ foldMap (S.singleton . second S.size) $ partitionBy (floor . (/binSize)) dist -- partition/sort data into bins, then replace bin indicies with value ranges
 
 -- replace with Data.Foldable.maximum :: (Foldable t, Ord a) => t a -> a?
 -- it'd be cleaner, but I can do Min' and Max' together in one fold.

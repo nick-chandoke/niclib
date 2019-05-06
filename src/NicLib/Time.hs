@@ -6,7 +6,6 @@ module NicLib.Time
 import RIO
 import Data.Time.Calendar
 import Data.Time.Clock
-import Control.Monad.IO.Class
 
 -- | (year, month, day)
 today :: MonadIO m => m (Integer, Int, Int)

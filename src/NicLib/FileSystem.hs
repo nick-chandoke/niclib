@@ -33,7 +33,6 @@ import RIO hiding (FilePath)
 
 import Data.Function (on)
 import Control.Applicative
-import Control.Arrow ((&&&))
 import Control.Monad (guard)
 import Control.Monad.Catch
 import Control.Monad.Trans.Except
@@ -233,9 +232,10 @@ fileEq a b = liftA2 (==) (readFileBinary a) (readFileBinary b)
 --
 -- The @[String]@ ExceptT error value is a stack of the links that realPath tried to read, with the one that failed at the head
 realPath :: String -> ExceptT [String] IO String
-realPath = go . pure -- ignore warning "non-exhaustive pattern not matched []"
+realPath = go . pure
     where go ss@(s:_) = liftIO (D.doesPathExist s) >>= \case
             False -> ExceptT . pure $ Left ss
             True -> liftIO (D.pathIsSymbolicLink s) >>= \case
                 False -> pure s
                 True -> liftIO (readSymbolicLink s) >>= go . (:ss) -- equal to realPath, but I err on the side of recursion rather than mutual recursion, for optimization.
+          go [] = error "impossible"

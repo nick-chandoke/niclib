@@ -17,6 +17,7 @@ module NicLib.NStdLib
 , liftME
 , describeIOError
 , showBin
+, displayBS
 -- * Monad Transformer Morphisms
 , morphism239
 , morphism240
@@ -31,34 +32,33 @@ module NicLib.NStdLib
 -- * Ordering Comonad
 , OrderBy(..)
 , orderBy
+-- * Hack to Make IO Things Work
+, WithToIO
+, MonadUnliftIO'(..)
 ) where
 
-import RIO hiding (GT, LT, EQ, (.), id)
-import Data.Proxy
 import Control.Applicative
 import Control.Arrow
 import Control.Category
-import Control.Monad
-import Control.Monad.Trans.Accum (AccumT, add, runAccumT)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Except (ExceptT(..), runExceptT)
-import Data.Bifunctor as BiF
-import Data.Bool
-import Data.Char
-import Data.Function (on, fix) -- importing everything messes with the ArrowCurry definition
-import Data.Foldable
-import Data.Maybe
-import Data.Monoid (Alt(..))
-import RIO.Set (Set)
-import Data.String
-import Data.Tree
-import Numeric (showIntAtBase)
-import qualified Data.ListLike as LL
-import qualified Data.Set as S
-import Prelude (ShowS)
-import System.IO.Error
 import Control.Comonad
 import Control.Comonad.Env
+import Control.Monad
+import Data.Bifunctor as BiF
+import Data.Bool
+import Data.ByteString.Builder (byteString)
+import Data.Char (intToDigit)
+import Data.Foldable
+import Data.Function (on, fix) -- importing everything messes with the ArrowCurry definition
+import Data.Maybe
+import Data.Monoid (Alt(..))
+import Data.String
+import Numeric (showIntAtBase)
+import Prelude (ShowS)
+import RIO hiding (GT, LT, EQ, (.), id)
+import RIO.Set (Set)
+import System.IO.Error
+import qualified Data.ListLike as LL
+import qualified Data.Set as S
 
 -- | @OrderBy@ inherits @Eq@ & @Ord@ instances from left parameter, ignoring right parameter
 --
@@ -71,7 +71,7 @@ instance Ord ord => Ord (OrderBy ord a) where compare (OrderBy ord _) (OrderBy c
 instance Comonad (OrderBy ord) where
     extract (OrderBy _ a) = a
     duplicate x@(OrderBy ord _) = OrderBy ord x
-    extend cok x@(OrderBy ord a) = OrderBy ord (cok x)
+    extend cok x@(OrderBy ord _) = OrderBy ord (cok x)
 instance ComonadEnv ord (OrderBy ord) where
     ask (OrderBy ord _) = ord
 
@@ -258,6 +258,10 @@ foldBins' f1 f2 x = curry . foldl' (\t -> liftA2 f1 t . uncurry . on f2) (pure x
 showBin :: (Show a, Integral a) => a -> ShowS
 showBin = showIntAtBase 2 intToDigit
 
+-- | Somewhy @ByteString@ doesn't instance @Display@. Rather than orphan one, here's a function.
+displayBS :: ByteString -> Utf8Builder
+displayBS = Utf8Builder . byteString
+
 {-
 -- | writes state to file, database, &c (MonadCatch m => s -> m ()), every n actions, state updates, or upon predicate satisfaction (predicate is checked after every monadic action)
 -- should I have a new data type for this, though? It's so simple: it's just a StateT with (>>=) = (>>=) >=> (bool' (return ()) writeState p =<< get)
@@ -299,3 +303,14 @@ describeIOError e =
 liftME :: l -> Maybe a -> Either l a
 liftME l Nothing = Left l
 liftME _ (Just x) = Right x
+
+type family WithToIO (m :: * -> *) = (r :: *) | r -> m
+type instance WithToIO IO = ()
+
+-- | @MonadUnliftIO@ that actually /gets an @IO@/ from the monad, rather than merely /running an operation in @IO@/ from within the given monad.
+--
+-- The associated type is to accomodate @RIO env@ or other extra-unary types.
+class (MonadIO m, MonadUnliftIO m) => MonadUnliftIO' m where
+    toIO' :: WithToIO m -> m a -> IO a
+
+instance MonadUnliftIO' IO where toIO' _ = id

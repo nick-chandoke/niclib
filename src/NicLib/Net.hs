@@ -1,21 +1,13 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- | A more approachable API to @uri-bytestring@ and @req@. Import this instead of @uri-bytestring@ or @req@. And nota bene: /req/ is both the name of a package, and the premier function it exports.
+-- | A package about fetching resources from URLs. A more approachable API to @uri-bytestring@ and @req@. Import this instead of @uri-bytestring@ or @req@. By the way, /req/ is both the name of a package, and the premier function it exports.
 --
--- The expected progression of morphisms is @ByteString@ → @URIRef@ → @Url@ → add options → 'req'. @req@ does not export the constructor of @Url@; thus there are no morphisms @Url@ → @URIRef@. This means that @Url@s are just isomorphisms of @URIRef@s that can be passed to @req@. That's why this module exports versions of @req@ and friends that accept @URIRef Absolute@s rather than @Url@s.
+-- Generally you'll start with a @ByteString@, convert it to a @URIRef@, then pass that to @req@ or friends. Users of the req package may wonder where the @Url :: * -> *@ type is. It's hidden behind-the-scenes; use @URIRef@ instead. @URIRef@ encodes whether a URL is relative or not, which is always useful information. Also converting to a @URIRef@ is safer than converting to a @Url@, simply because better parsing is done. @req@ &al are overridden in this package to accept @URIRef Absolute@'s rather than @Url a@'s.
 --
--- === 'URIRef' vs. 'Url'
+-- === Note
 --
--- * @URIRef@ is defined in @uri-bytestring@. @Url@ is defined in @req@
--- * Because this library uses both @req@ and @uri-bytestring@, but @req@ uses only http and https schemes despite @uri-bytestring@ using any @ByteString@ as a scheme, we must limit schemes to the intersection of these two libraries: http and https.
---     * NicLib.Net re-exports @req@'s @Scheme@ and not @uri-bytestring@'s
---
--- Both are binary GADT coproducts:
---
--- * @URIRef@: @Absolute@ | @Relative@
--- * @Url@: @Http@ | @Https@
---
--- Becasue every @Url@ has a scheme, all @Urls@ created from a @URIRef@ are computed from at least one @URIRef Absolute@.
+-- * because @Url (a :: Scheme)@ is used for @req@ &al, and @data Scheme = Http | Https@, you can parse only http(s)-scheme-URLs from bytestrings to @URIRef@'s.
+-- * NicLib.Net re-exports @req@'s @Scheme@ and not @uri-bytestring@'s
 --
 -- Also, the req 'Options' opaque monoid is parameterized by a scheme, but the only functions that use a specific scheme are
 --
@@ -32,19 +24,20 @@ module NicLib.Net
 , relTo
 -- * Render
 , normalize
--- * Exception Type
+-- * Types/Kinds
+, Fetchable
 , BadUrlException(..)
--- * Re-exports from req or req-conduit
-, Url
--- ** Custom Monad Config
-, MonadHttp(..)
-, HttpConfig(..)
--- ** Request
+-- * Request
 , req
 , reqBc
+, reqBr
 , req'
 , Req
 , runReq
+-- * Re-exports from req or req-conduit
+-- ** Custom Monad Config
+, MonadHttp(..)
+, HttpConfig(..)
 -- *** Request Bodies
 , FormUrlEncodedParam
 , NoReqBody(..)
@@ -64,11 +57,25 @@ module NicLib.Net
 , cookieJar
 , decompress
 , basicProxyAuth
+-- ** Methods
+, GET(..)
+, POST(..)
+, HEAD(..)
+, PUT(..)
+, DELETE(..)
+, TRACE(..)
+, CONNECT(..)
+, OPTIONS(..)
+, PATCH(..)
 -- *** Response Accessors
+, HttpResponse(..)
 , responseBody
+, responseBodySource
+, responseStatus
 , responseStatusCode
 , responseStatusMessage
 , responseHeader
+, responseHeaders
 , responseCookieJar
 -- **** Response Body Accessor Proxies/Hints
 , IgnoreResponse
@@ -77,12 +84,6 @@ module NicLib.Net
 , jsonResponse
 , BsResponse
 , bsResponse
--- ** HTTP Methods
-, GET(..)
-, POST(..)
-, HEAD(..)
-, PUT(..)
-, DELETE(..)
 -- ** Exceptions
 , HttpException(..)
 , CanHaveBody(..)
@@ -124,31 +125,24 @@ module NicLib.Net
 ) where
 
 import RIO
+import RIO.ByteString (ByteString)
+import qualified RIO.ByteString as BS
+import RIO.Text (Text, decodeUtf8')
+import qualified RIO.Text as T
 
 -- base
 import Control.Arrow
 import Control.Monad (foldM)
 import Data.Char (toLower)
-import Data.Foldable (foldl')
-import Data.Proxy
 import qualified Data.Bifunctor as BiF
 import Control.Applicative (liftA2)
 
--- text
-import RIO.Text (Text, decodeUtf8')
-import qualified RIO.Text as T
-
 -- NicLib
-import NicLib.NStdLib (both, liftME, (<||>))
+import NicLib.NStdLib (both, (<||>), WithToIO, MonadUnliftIO'(..))
 import NicLib.FileSystem (concatPaths)
 
--- bytestring
-import qualified RIO.ByteString as BS'
-import qualified Data.ByteString.Char8 as BSC'
-
 -- misc
-import Control.Exception.Safe -- safe-exceptions
-import Control.Monad.Catch as Catch -- exceptions. Apparently this is necessary, as instancing MonadThrow cannot be done with importing just safe-exceptions
+import qualified Data.ByteString.Char8 as BSC -- bytestring
 import Conduit hiding (throwM) -- conduit
 
 -- uri-bytestring
@@ -156,10 +150,12 @@ import URI.ByteString hiding (parseURI, Scheme(..))
 import qualified URI.ByteString as U
 
 -- req and req-conduit
-import Network.HTTP.Client (Manager, Request)
+import Network.HTTP.Client (Manager, Request, BodyReader, Response, responseHeaders, responseStatus)
 import Network.HTTP.Req hiding (req, req', reqBr)
 import Network.HTTP.Req.Conduit
 import qualified Network.HTTP.Req as Req
+
+type Fetchable m = (MonadHttp m, MonadThrow m, MonadUnliftIO' m)
 
 data BadUrlException
     = NonHTTP
@@ -169,7 +165,7 @@ data BadUrlException
 instance Exception BadUrlException
 
 instance MonadThrow Req where
-    throwM = liftIO . Catch.throwM
+    throwM = liftIO . throwM
 
 {-
 instance MonadHttp _ where
@@ -213,34 +209,34 @@ instance MonadHttp _ where
         _   -> "th"
 -}
 
--- | The preferred normalization. Convenience function.
-normalize :: URIRef a -> BS'.ByteString
+-- | The preferred normalization. Convenience function that uses aggressive normalization.
+normalize :: URIRef a -> ByteString
 normalize = normalizeURIRef' aggressiveNormalization
 
--- | Made to parse href elements from HTML. Remember that hand-written URLs like "site.com/page1" are incorrectly parsed as relative url paths.
-parseURI :: BS'.ByteString -> Either URIParseError (Either (URIRef Relative) (URIRef Absolute))
+-- | Made to parse href elements from HTML; uses a lax parser. Remember that hand-written URLs like "site.com/page1" are incorrectly parsed as relative url paths.
+parseURI :: BS.ByteString -> Either URIParseError (Either (URIRef Relative) (URIRef Absolute))
 parseURI s = let rel = either Left (pure . Left) $ parseRelativeRef laxURIParserOptions s in case U.parseURI laxURIParserOptions s of
     Left (MalformedScheme MissingColon) -> rel
     Left (MalformedScheme NonAlphaLeading) -> rel
     Left o -> Left o
-    Right r -> pure . Right $ r {uriPath = replIf BSC'.null (uriPath r) "/"}
+    Right r -> pure . Right $ r {uriPath = replIf BSC.null (uriPath r) "/"}
 
 -- | Produce an absolute URL from a @parseURI@ value
 relTo :: URIRef a -> URIRef Absolute -> URIRef Absolute
 parsed `relTo` (URI {..}) = case parsed of -- URI and RelativeRef have different field names, so wildcards are safe
     RelativeRef {..} ->
-        let withDots = replIf (not . (("./" `BSC'.isPrefixOf`) <||> ("../" `BSC'.isPrefixOf`))) rrPath ("../" <> rrPath)
-            !rrPath' = replIf (not . ("/" `BSC'.isPrefixOf`)) rrPath
+        let withDots = replIf (not . (("./" `BSC.isPrefixOf`) <||> ("../" `BSC.isPrefixOf`))) rrPath ("../" <> rrPath)
+            !rrPath' = replIf (not . ("/" `BSC.isPrefixOf`)) rrPath
                      $ concatPaths 0x2F uriPath withDots
         in URI uriScheme uriAuthority rrPath' rrQuery rrFragment
     a@(URI _ _ _ _ _) -> a -- parsed was absolute already; keep as-is
 
 -- | Inherit scheme and/or domain from a given absolute url. Convenience function built atop 'parseURI' and 'relTo'.
-parseRelTo :: URIRef Absolute -> BS'.ByteString -> Either URIParseError (URIRef Absolute)
+parseRelTo :: URIRef Absolute -> BS.ByteString -> Either URIParseError (URIRef Absolute)
 parseRelTo base bs
-    | BSC'.null bs = Left (OtherError "parsing a null relative path is nonsensical")
+    | BSC.null bs = Left (OtherError "parsing a null relative path is nonsensical")
     | otherwise =
-        let bs' = replIf ("//" `BS'.isPrefixOf`) bs (U.schemeBS (uriScheme base) <> ":" <> bs)
+        let bs' = replIf ("//" `BS.isPrefixOf`) bs (U.schemeBS (uriScheme base) <> ":" <> bs)
         in case parseURI bs' of
             Left l -> Left l
             Right x -> pure $ either (`relTo` base) id x
@@ -251,7 +247,7 @@ parseRelTo base bs
 --
 -- Also, do not use @lbsResponse@; use 'reqBc' instead.
 req :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpResponse response, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
-    => method
+    => method -- ^
     -> URIRef Absolute
     -> body
     -> Proxy response
@@ -259,19 +255,37 @@ req :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpRespons
     -> m response
 req m uri body p opts = reqHelper opts uri $ \(u,o) -> Req.req m u body p o
 
--- | Consume HTTP response body via Conduit (wrapper around req-conduit's 'responseBodySource', that's easier to use, and obviously, that works with 'URIRef's)
-reqBc :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
-      => method
+-- | Stream HTTP response body.
+--
+-- This function encourages the use of conduits to stream responses rather than handle them via lazy bytestrings or other techniques. However, there are certain circumstances in which you should still use 'reqBr' instead, for when you need to return in @IO@ but outside a conduit. Note that in these cases, if you're reading the body, you should use still use conduit for that.
+--
+-- This function used to have the consumer parameter be a conduit in @ResourceT m@; however, it's been generalized to all monads. If you want to use a resourceful conduit like 'sinkFile', you must release that resource yourself via 'runResourceT', /e.g./
+--
+-- @reqBc _ _ _ _ _ $ \\rbr -> 'transPipe' runResourceT $ 'responseBodySource' .| sinkFile _@
+reqBc :: (Fetchable m, HttpMethod method, HttpBody body, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
+      => method -- ^
       -> URIRef Absolute
       -> body
       -> (forall scheme. Option scheme)
-      -> (forall f. MonadResource f => ConduitT BS'.ByteString Void f a) -- ^ e.g. 'sinkFile'
+      -> WithToIO m
+      -> (Response BodyReader -> ConduitT () Void m a)
       -> m a
-reqBc m uri body opts consumer = reqHelper opts uri $ \(u,o) ->
-    Req.reqBr m u body (o <> opts) (\respBodyReader -> runConduitRes $ responseBodySource respBodyReader .| consumer)
+reqBc m uri body opts env consumer = reqHelper opts uri $ \(u,o) ->
+    Req.reqBr m u body (o <> opts) (toIO' env . runConduit . consumer)
+
+-- | Override of the original function that works with @URIRef Absolute@'s.
+reqBr :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
+      => method -- ^
+      -> URIRef Absolute
+      -> body
+      -> (forall scheme. Option scheme)
+      -> (Response BodyReader -> IO a)
+      -> m a
+reqBr m uri body opts f = reqHelper opts uri $ \(u,o) ->
+    Req.reqBr m u body (o <> opts) f
 
 req' :: (MonadHttp m, MonadThrow m, HttpMethod method, HttpBody body, HttpBodyAllowed (AllowsBody method) (ProvidesBody body))
-     => method
+     => method -- ^
      -> URIRef Absolute
      -> body
      -> (forall scheme. Option scheme)
@@ -298,15 +312,15 @@ reqHelper o u f = uriToUrl u >>= (f ||| f) . BiF.bimap (second (<>o)) (second (<
 -- | May throw 'BadUrlException' or 'UnicodeException'. Disregards URI fragments
 uriToUrl :: forall m. MonadThrow m => URIRef Absolute -> m EUO
 uriToUrl (URI {uriScheme, uriAuthority, uriPath, uriQuery}) = case uriAuthority of
-    Nothing -> throw $ MalformedURL "Authority"
+    Nothing -> throwM $ MalformedURL "Authority"
     Just (Authority {authorityUserInfo, authorityHost = ah, authorityPort}) ->
         let -- apply to a url after giving it a scheme via http or https functions
             addPath :: Url scheme -> m (Url scheme)
             addPath z =
-                if BS'.null uriPath then
+                if BS.null uriPath then
                     pure z
                 else
-                    foldM (\b -> fmap (b /:) . decode) z (BSC'.split '/' (BSC'.tail uriPath))
+                    foldM (\b -> fmap (b /:) . decode) z (BSC.split '/' (BSC.tail uriPath))
 
             wrap :: EUO -> m EUO
             wrap (Left (x, y)) = Left . (,y) <$> addPath x
@@ -319,18 +333,18 @@ uriToUrl (URI {uriScheme, uriAuthority, uriPath, uriQuery}) = case uriAuthority 
                     (queryPairs uriQuery)
             case authorityUserInfo of
                 Nothing ->
-                    case BSC'.map toLower $ U.schemeBS uriScheme of
+                    case BSC.map toLower $ U.schemeBS uriScheme of
                         "http"  ->   wrap $ Left  (http  host, getOpts gOpts)
                         "https" ->   wrap $ Right (https host, getOpts gOpts)
-                        _       ->   throw NonHTTP
+                        _       ->   throwM NonHTTP
                 Just (UserInfo user pass) ->
                     wrap $ Right (https host, basicAuth user pass <> getOpts gOpts)
   where
-    decode :: BSC'.ByteString -> m Text
-    decode = either throw pure . decodeUtf8'
+    decode :: BSC.ByteString -> m Text
+    decode = either throwM pure . decodeUtf8'
 
 -- | Runs 'parseURI' then pulls-out uri, assuming that it's absolute and well-formed
-unsafeParseURI :: BSC'.ByteString -> URIRef Absolute
+unsafeParseURI :: BSC.ByteString -> URIRef Absolute
 unsafeParseURI = (\case Right (Right x) -> x) . parseURI
 
 -- | Replace a value if predicate holds over it; else return the same object

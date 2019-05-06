@@ -11,7 +11,7 @@ import Data.Align (Align, padZipWith)
 import Data.Foldable (maximum)
 import Data.Maybe (fromMaybe)
 import NicLib.NStdLib
-import RIO
+import RIO hiding (sets)
 import RIO.Set (Set)
 import qualified Data.Bifunctor as BiF
 import qualified Data.Set as S
@@ -59,12 +59,11 @@ showDiff h1 h2 ( (h1:) . S.toList -> a
                , (h2:) . S.toList -> b
                , ("Both":) . S.toList -> c) =
     let longestA = longestLen a
-        ab = mergeLists longestA padding a b
+        ab = mergeLists longestA a b
         longestAB = longestLen ab
-        abc = mergeLists longestAB padding ab c
+        abc@(h:ts) = mergeLists longestAB ab c
         longestC = longestLen abc
-    in case abc of
-        (h:ts) -> T.unlines (h:T.replicate longestC "─":ts)
+    in T.unlines (h:T.replicate longestC "─":ts)
   where
     padding :: Int
     padding = 3
@@ -73,8 +72,8 @@ showDiff h1 h2 ( (h1:) . S.toList -> a
     longestLen = maximum . map T.length
 
     -- notably an endomorphism
-    mergeLists :: (Align f) => Int -> Int -> f T.Text -> f T.Text -> f T.Text
-    mergeLists ll padding = padZipWith (\(fromMaybe mempty -> a) (fromMaybe mempty -> b) -> a <> T.replicate (ll - T.length a + padding) " " <> b)
+    mergeLists :: (Align f) => Int -> f T.Text -> f T.Text -> f T.Text
+    mergeLists ll = padZipWith (\(fromMaybe mempty -> x) (fromMaybe mempty -> y) -> x <> T.replicate (ll - T.length x + padding) " " <> y)
 
 -- honestly there should be a ZipList-like Applicative that acts like Align (i.e. with padding)
 -- maybe I'll implement that sometime later
@@ -84,6 +83,6 @@ showDiffAsHtml :: T.Text -- ^ column 1 heading
                -> (Set T.Text, Set T.Text, Set T.Text) -- ^ diffs
                -> T.Text -- ^ output html
 showDiffAsHtml h1 h2 (S.toList -> a, S.toList -> b, S.toList -> c) =
-    let ab  = padZipWith (\(fromMaybe mempty -> a) (fromMaybe mempty -> b) -> "<td>" <> a <> "</td><td>" <> b <> "</td>") a b
-        abc = padZipWith (\(fromMaybe "<td></td><td></td>" -> ab) (fromMaybe mempty -> c) -> "<tr>" <> ab <> "<td>" <> c <> "</td></tr>") ab c
+    let ab  = padZipWith (\(fromMaybe mempty -> x) (fromMaybe mempty -> y) -> "<td>" <> x <> "</td><td>" <> y <> "</td>") a b
+        abc = padZipWith (\(fromMaybe "<td></td><td></td>" -> xy) (fromMaybe mempty -> z) -> "<tr>" <> xy <> "<td>" <> z <> "</td></tr>") ab c
     in "<table><thead><tr><td>" <> h1 <> "</td><td>" <> h2 <> "</td><td>Both</td></tr></thead><tbody>" <> fold abc <> "</tbody></table>"

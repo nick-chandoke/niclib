@@ -3,9 +3,9 @@
 -- TODO: tries are a {-# SPECIALIZATION #-} of trees. One should never have a tree of something when a trie is permittable. Make this selection automatic.
 -- | A space-effecient set of sequences whose elements permit an order; isomorphic with @Ord a => Set [a]@. Uses 'Set' and 'ListLike' under-the-hood.
 --
--- More precisely, a trie's efficiency relative to its isomorphic set varies with the extent that the set's elements share common subsequences.
+-- Strict in keys but not values.
 --
--- Likely you'll want to import this module qualified
+-- Likely you'll want to import this module qualified.
 module NicLib.Structures.Trie
 ( Trie
 , delete
@@ -56,37 +56,35 @@ import qualified Data.ListLike as LL
 import qualified Data.Set as S
 import qualified Prelude as Pl
 
--- | Multiroot Trie stored as a set of @Trie'@s. May be @Set.empty@.
-newtype Trie val tag = Trie {getTrie :: S.Set (Trie' val tag)} deriving (Eq, Ord)
+newtype Trie val tag = Trie { getTrie :: S.Set (Trie' val tag) } deriving (Eq, Ord)
 
 --  A Stop tells that the path from root to that stop is an item in the set, e.g. c -> a -> t -> {Stop (), a -> m -> a -> r -> a -> n -> Stop ()} <-> {("cat", ()), ("catamaran", ())}
 -- children will never be @S.null@; the smallest a children can be is the set @S.fromList [Stop _]@. Also, @Stop@s are always the minimum element of any trie.
 -- you may tag a Stop element with any data you wish; the Stop data is data that belongs with the element stored in the set, but only belongs to that whole element altogether, not having any meaning in the mere context of an element of the sequence stored as an element of the trie; for example, you may want to store a trie of (String, Int), where the Int is associated with a string, but not any character.
 -- remember that Stops' values have no effect on the Trie's organization; they're merely tagged-on for inserting and getting items. In other words, Stop values don't affect ordering of elements, trie membership, ...or anything other than "going-with" insert & singleton, and get functions (e.g. findMin, toSet)
-data Trie' val tag = Trie' {val :: val, children :: Trie val tag} | Stop tag deriving Show
+data Trie' val tag = Trie' { val :: val, children :: !(Trie val tag) } | Stop tag deriving Show
 instance (Show item, Ord item, Show tag) => Show (Trie item tag) where
     show t0 | null t0   = "[EMPTY]"
-            | otherwise = init $ go 1 S.empty t0
+            | otherwise = init (go 1 S.empty t0)
         where
             indentAmt = 4 -- number of spaces that makes an indentation
-            go tab vbars (getTrie -> trie) = flip foldMap trie $ \t -> -- go is recursive
+            go !tab !vbars (getTrie -> !trie) = flip foldMap trie $! \t -> -- go is recursive
                 let isMaxElement = case t of
                         Stop _ -> S.size trie == 1
-                        Trie' v _ -> v == val (S.findMax trie)
-                    graphicBranch = fix (\f s i -> if i < tab then f (s ++ bool " " "│" (i `S.member` vbars) ++ replicate (indentAmt - 1) ' ') (i + 1) else s) "" 1 ++ bool "├" "└" isMaxElement
-                in graphicBranch ++ '─':' ':(case t of Stop v -> "[TAG] " ++ show v ++ "\n"; Trie' v k -> show v ++ "\n" ++ go (succ tab) (if isMaxElement then vbars else S.insert tab vbars) k)
+                        Trie' !v _ -> v == val (S.findMax trie)
+                    graphicBranch = fix (\f !s !i -> if i < tab then f (s ++ bool " " "│" (i `S.member` vbars) ++ replicate (indentAmt - 1) ' ') (i + 1) else s) "" 1 ++ bool "├" "└" isMaxElement
+                in graphicBranch ++ '─':' ':(case t of Stop !v -> "[TAG] " ++ show v ++ "\n"; Trie' !v !k -> show v ++ "\n" ++ go (succ tab) (if isMaxElement then vbars else S.insert tab vbars) k)
 
 -- | Add elements from one trie into another. Elements present in both tries have @<>@ applied to their tags.
 instance (Ord a, Semigroup tag) => Semigroup (Trie a tag) where
-    a <> b = foldl' (\t full tag -> update' full tag t) a b where
+    (<>) !a !b = foldl' (\ !t !full tag -> update' full tag t) a b where
         -- update modified for (<>) rather than replacement
-        update' :: (Ord item) => [item] -> tag -> Trie item tag -> Trie item tag -- [] is acting as our ListLike here.
-        update' ss tag = match ss >>> \(t,h) -> case LL.splitAt (length h) ss of
-            (p1, p2) ->
-                let
-                    x = Trie $ S.union (getTrie $ singleton (p2, y)) (getTrie t)
+        update' :: (Ord item) => [item] -> tag -> Trie item tag -> Trie item tag
+        update' !ss tag = match ss >>> \(!t,!h) -> case LL.splitAt (length h) ss of
+            (!p1, !p2) ->
+                let !y = if LL.length ss == length h then fromMaybe tag $ (<> tag) . fst <$> factorStop t else tag -- this is a modified lookup function
+                    !x = Trie $! S.union (getTrie $ singleton (p2, y)) (getTrie t) -- idk if union is strict
                     -- NB. update = update' when y = tag
-                    y = if LL.length ss == length h then fromMaybe tag $ (<> tag) . fst <$> factorStop t else tag -- this is a modified lookup function
                 in zip p1 x h
 
 instance (Monoid tag, Ord a) => Monoid (Trie a tag) where
@@ -95,14 +93,14 @@ instance (Monoid tag, Ord a) => Monoid (Trie a tag) where
 
 -- | First map (the one over values, not tags) must be monotonic! Be careful, as this condition cannot be checked, and behavior is undefined for non-monotonic mappings!
 --
--- Not an instance of @Bifunctor@ because this @bimap@ has a more specific type than Bifunctor's bimap; it requires that the elements being mapped over instance @Ord@.
+-- Not an instance of @Bifunctor@ because this @bimap@ requires that the elements being mapped over instance @Ord@.
 bimap :: (Ord a, Ord b) => (a -> b) -> (c -> d) -> Trie a c -> Trie b d
-bimap f g = Trie . S.map (\case Trie' v k -> Trie' (f v) (bimap f g k); Stop stopVal -> Stop (g stopVal)) . getTrie
+bimap f g = Trie . S.map (\case Trie' !v !k -> Trie' (f v) (bimap f g k); Stop stopVal -> Stop (g stopVal)) . getTrie
 
 -- helper method. returns (Stop, non-Stops); if no Stop, returns Nothing (in which case the right side of the partition pair is equal to the Trie passed to it)
 -- inexhaustive pattern match against Stop only is OK
 factorStop :: Trie val tag -> Maybe (tag, Trie val tag)
-factorStop = (\(s,r) -> if S.null s then Nothing else Just (case S.elemAt 0 s of Stop sv -> sv, Trie r)) . S.partition (\case Stop _ -> True; _ -> False) . getTrie
+factorStop = (\(s,!r) -> if S.null s then Nothing else Just (case S.elemAt 0 s of Stop sv -> sv, Trie r)) . S.partition (\case Stop _ -> True; _ -> False) . getTrie
 
 -- | helper method. Whether a Trie contains a Stop element
 hasStop :: Trie a b -> Bool
@@ -115,15 +113,18 @@ null :: (Ord a) => Trie a b -> Bool
 null = S.null . getTrie
 
 singleton :: (ListLike full item, Ord item) => (full, tag) -> Trie item tag
-singleton (full, tag) = Trie $ LL.foldr (\z c -> S.singleton (Trie' z (Trie c))) (S.singleton (Stop tag)) full
+singleton (!full, tag) = Trie $ LL.foldl'
+    (\c z -> S.singleton (Trie' z $ Trie c))
+    (S.singleton $ Stop tag)
+    full
 
 delete :: forall full item tag. (ListLike full item, Ord item) => full -> Trie item tag -> Trie item tag
-delete ss tt =
+delete !ss !tt =
     if LL.length ss /= length h then tt else
-        flip (maybe tt) t $ \(snd -> t_nonStops) ->
+        flip (maybe tt) t $ \(snd -> !t_nonStops) ->
             if null t_nonStops then -- there do not exist any items in trie longer than the one we're deleting (e.g. "catamaran" from trie {"cat", "car", "catamaran"})
                 case dropWhile (\n -> maybe (null n) (const False) (factorStop n)) h of -- delete parents until the first with a non-null non-stop set
-                    [] -> zip (LL.empty :: full) empty [last h]
+                    [] -> zip (mempty :: full) empty [last h]
                     (fh:rh) -> zip (LL.take (length rh) ss) fh rh
             else -- there are items longer than the one we're deleting (e.g. we're deleting "cat" from trie {"cat", "car", "catamaran"}
                 zip ss t_nonStops h -- so just delete the Stop at the matched node, and zip it up
@@ -138,7 +139,7 @@ notMember = cT not member
 
 -- | Get an index's associated tag
 lookup :: (LL.ListLike full a, Ord a) => full -> Trie a tag -> Maybe tag
-lookup ss = match ss >>> \(t,h) -> if LL.length ss == length h then fst <$> factorStop t else Nothing
+lookup !ss = match ss >>> \(t,h) -> if LL.length ss == length h then fst <$> factorStop t else Nothing
 
 -- | Insert item into trie if item is not already there; if item is in trie already (independent of its tag value) then trie is unaltered. Use method update to update an already existant item's tag value 
 insert :: (ListLike full item, Ord item) => full -> tag -> Trie item tag -> Trie item tag
@@ -253,12 +254,12 @@ instance Ord a => Ord (Trie' a tag) where
 
 -- TODO: match is (at least one of) the most expensive and elementary functions in Trie. Many methods depend on its output ((t,h) -> ...); make this combinatory.
 -- helper function. Searches through a trie for branch matching longest substring of given sequence. Returns (matched trie t, stack of tries ancestors of t \ t)
-match :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> (t, [t])
+match :: forall full item t tag. (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> (t, [t])
 match ss t = go ss t [] where
-    go :: (ListLike full item, Ord item, t ~ Trie item tag) => full -> t -> [t] -> (t, [t])
-    go s t'@(getTrie -> t) h = maybe (t', h) (\(x,cs) -> go cs (children x) (Trie (S.delete x t):h)) $ do
+    go :: full -> t -> [t] -> (t, [t])
+    go !s !t'@(getTrie -> t) !h = maybe (t', h) (\(!x,!cs) -> go cs (children x) (Trie (S.delete x t):h)) $ do
         (c,cs) <- LL.uncons s
-        x <- setFind ((c==) . val) (maybe t (getTrie . snd) (factorStop $ Trie t))
+        x <- setFind ((c==) . val) (maybe t (getTrie . snd) (factorStop t'))
         pure (x,cs)
 
 -- inserts a sub-Trie' into a larger Trie, using a stack whose head is childmost Trie
