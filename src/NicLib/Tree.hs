@@ -11,10 +11,9 @@ module NicLib.Tree
 , readIndentedText
 ) where
 
+-- rio & base
 import RIO
 import Prelude (succ)
-
--- base
 import Control.Arrow ((***), second, (|||), (>>>))
 import Control.Monad (guard)
 import Data.Char (isSpace)
@@ -30,9 +29,7 @@ import qualified RIO.Map as M
 -- NicLib
 import NicLib.NStdLib (liftME)
 
--- misc.
 import qualified Data.Bifunctor as BiF -- bifunctors
-import qualified Data.ListLike as LL -- ListLike
 
 -- text
 import Data.Text (Text)
@@ -147,20 +144,20 @@ type LvlNode i a = (i, Tree a)
 -- Parses multirooted trees into a @Seq@. Each root has a potential of failing to parse due to ambiguous indentation.
 --
 --  The return type is natural of the computation; use 'sequenceA' to convert to @Either Text (Seq (Tree b))@. If you do, consider that this @sequenceA@ is non-isomorphic, despite being a bijection.
-readIndentedGeneral :: (Integral i, LL.ListLike t a)
+readIndentedGeneral :: (Integral i)
                     => (a -> Text) -- ^ function to convert input to strict text for output error messages (you may want to use a whitespace stripping function in there)
                     -> (a -> Either b (i, b)) -- ^ @Right@ (length, item to put into tree node); or @Left@ for elements that aren't a part of the tree structure, but need to be included nonetheless, /e.g./ when parsing an HTML document's heading (e.g. h1, h2) elements into a tree, there may be html in-between that doesn't affect the heading hierarchy, that you nonetheless want to include in the tree; these non-hierarchy-affecting elements inherit the last-read hierarchy level.
-                    -> t -- ^ input to process
+                    -> [a] -- ^ input to process
                     -> Seq (Either Text (Tree b))
 readIndentedGeneral toErrMsg ((fmap (second pure) .) -> textToPair) is = pure . Left ||| uncurry go . BiF.first pure $ do
-    (root, ts) <- liftME "Cannot parse a tree from an empty list of nodes!" $ LL.uncons is
+    (root, ts) <- liftME "Cannot parse a tree from an empty list of nodes!" $ uncons is
     p <- BiF.first (const "First line must parse into the tree's root; could not derive node level and value from first line.") $ textToPair root -- Nothing nodes are always siblings ↔ Nothing nodes must have a parent ↔ a Nothing node cannot be a root
     pure (p, ts)
     where
         -- a trailing prime on variable names (e.g. i') denotes that of the current step; the same variable name without the prime denotes the prior step's values
         -- Mnemonics: t(ree), i(ndentation), p(air), s(stack). Note that variable "text" is used ONLY for returning error messages! p' is the form of text that's actually used in computation!
         -- Because of listToBranch, pushing a node onto the stack corresponds to increasing the depth of the tree by 1
-        go s@((i,t):ps) = LL.uncons >>> \case
+        go s@((i,t):ps) = uncons >>> \case
             Nothing -> close s
             Just (text, ts) ->
                 case textToPair text of

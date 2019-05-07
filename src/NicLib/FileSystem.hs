@@ -39,7 +39,6 @@ import Control.Monad.Trans.Except
 -- import Control.Monad.Trans.Reader -- * uncomment when finishing dirdiff
 import Data.Bool (bool)
 -- import Data.IORef -- *
-import Data.ListLike (ListLike)
 -- import RIO.Seq ((|>)) -- *
 import Data.String (IsString(..))
 -- import Data.Tree -- *
@@ -49,11 +48,12 @@ import NicLib.NStdLib
 import Prelude hiding (FilePath)
 import System.FilePath (pathSeparator)
 import System.Posix.Files (createSymbolicLink, readSymbolicLink)
-import qualified Data.ListLike as LL
 -- import qualified RIO.Set as S -- *
 -- import qualified RIO.Text as T -- *
 import qualified Prelude
 import qualified RIO.Directory as D
+import Data.Sequences (tailEx, cons, IsSequence(..))
+import Data.MonoTraversable
 
 -- | Wrapper around @String@ filepaths such that their semigroup operation guarantees exactly one 'pathSeparator' between the @FilePath@'s. This is separate from @(\</\>)@, which sometimes puts two consecutive separators.
 newtype FilePath = FilePath { unwrapFilePath :: Prelude.FilePath }
@@ -65,15 +65,17 @@ instance Monoid FilePath where
 instance Semigroup FilePath where (<>) = mappend -- GHC < 8.4.1 compat
 
 -- | Append two paths with exactly one separator between them
-concatPaths :: (LL.ListLike full item, Eq item) => item -> full -> full -> full
+--
+-- Generalized to @MonoTraversable@ from @String@ to accomodate URL handling on the '/' separator
+concatPaths :: forall seq elem. (Semigroup seq, IsSequence seq, MonoTraversable seq, elem ~ Element seq, Eq elem) => elem -> seq -> seq -> seq
 concatPaths s a b
-    | LL.null a = b
-    | LL.null b = a
-    | otherwise = if | c a && d b -> a <> LL.tail b -- we don't want a//b (posix) or a\\b (win); System.FilePath.(</>) doesn't account for this
+    | onull a = b
+    | onull b = a
+    | otherwise = if | c a && d b -> a <> tailEx b -- we don't want a//b (posix) or a\\b (win); System.FilePath.(</>) doesn't account for this
                      | c a || d b -> a <> b
-                     | otherwise  -> a <> (LL.cons s b)
-        where c = (s ==) . LL.last
-              d = (s ==) . LL.head
+                     | otherwise  -> a <> (s `cons` b)
+        where c = (s ==) . lastEx
+              d = (s ==) . headEx
 
 -- | Prettier alias for 'D.listDirectory'
 ls :: MonadIO m => String -> m [String]
@@ -116,12 +118,12 @@ nextDuplicateFileName a = case breakAtLast '.' a of
 -- | Checks whether object at path exists, and if not, returns original name; if so, returns 'nextDuplicateFileName' @name@
 --
 -- Works for both relative and absolute pathnames, as per 'System.Directory.doesPathExist'
-pathOrNextDuplicate :: String -> IO String
-pathOrNextDuplicate p = bool p (nextDuplicateFileName p) <$> D.doesPathExist p
+pathOrNextDuplicate :: MonadIO m => String -> m String
+pathOrNextDuplicate p = liftIO $ bool p (nextDuplicateFileName p) <$> D.doesPathExist p
 
 -- | Get file extension. Returns empty string if no extension. Extension includes leading dot.
 fileExtension :: String -> String
-fileExtension s = if '.' `elem` s then ('.':) . reverse . takeWhile (/='.') $ reverse s else empty
+fileExtension s = if '.' `elem` s then ('.':) . reverse . Prelude.takeWhile (/='.') $ reverse s else empty
 
 -- | Replace a file's extension if it has one; add one if it doesn't.
 --
@@ -169,21 +171,21 @@ cd dir = liftIO $ D.setCurrentDirectory dir
 -- In other words, when sensible (i.e. pathname has a directory and filename,)
 --
 -- prop> uncurry ListLike.append . dirAndBase = id
-dirAndBase :: ListLike full Char => full -> (full, full)
+dirAndBase :: String -> (String, String)
 dirAndBase = breakAtLast pathSeparator
 
 -- | Longest parent segment of filepath (i.e. from left side), with trailing path separator removed, if any
-dirname :: ListLike full Char => full -> full
+dirname :: String -> String
 dirname = fst . dirAndBase
 
 -- | Child-most segment of filepath, with trailing path separator removed, if any
-basename :: ListLike full Char => full -> full
+basename :: String -> String
 basename = snd . dirAndBase
 
 -- | Remove trailing path separator from string
-noPathEnd :: ListLike s Char => s -> s
-noPathEnd s | LL.null s = LL.empty
-            | otherwise = LL.last s == pathSeparator ? LL.init s ↔ s
+noPathEnd :: String -> String
+noPathEnd s | null s = mempty
+            | otherwise = last s == pathSeparator ? init s ↔ s
 
 {-
 -- | Compare two directories recursively, for structure and file content; one can safely say that if dirdiff returns mempty on directories containing ONLY FILES AND DIRECTORIES (symlinks and special filesystem objects are not considered!), then these two directories are exactly identical.

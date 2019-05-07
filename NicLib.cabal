@@ -12,7 +12,7 @@ maintainer: Nicholas Chandoke <nicholas.chandoke@gmail.com>
 name: NicLib
 stability: Stable
 synopsis: nixy's personal lib
-tested-with: GHC ==8.4.3
+tested-with: GHC ==8.6.4
 version: 0.2.1
 
 library
@@ -33,7 +33,6 @@ library
       NicLib.Tree
   build-depends:
       base > 4 && < 5,
-      ListLike,
       binary,
       bytestring,
       comonad,
@@ -45,6 +44,7 @@ library
       filepath,
       ghc-prim,
       http-client,
+      mono-traversable,
       random-fu,
       random-source,
       req,

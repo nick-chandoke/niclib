@@ -37,28 +37,28 @@ module NicLib.NStdLib
 , MonadUnliftIO'(..)
 ) where
 
-import Control.Applicative
-import Control.Arrow
-import Control.Category
-import Control.Comonad
-import Control.Comonad.Env
-import Control.Monad
-import Data.Bifunctor as BiF
-import Data.Bool
-import Data.ByteString.Builder (byteString)
-import Data.Char (intToDigit)
-import Data.Foldable
-import Data.Function (on, fix) -- importing everything messes with the ArrowCurry definition
-import Data.Maybe
-import Data.Monoid (Alt(..))
-import Data.String
-import Numeric (showIntAtBase)
-import Prelude (ShowS)
+-- rio & base
 import RIO hiding (GT, LT, EQ, (.), id)
 import RIO.Set (Set)
+import Control.Applicative
+import Control.Category
+import Data.Bifunctor as BiF
+import Data.ByteString.Builder (byteString)
+import Data.Char (intToDigit)
+import Data.Function (on, fix) -- importing everything messes with the ArrowCurry definition
+import Data.Monoid (Alt(..))
+import Numeric (showIntAtBase)
+import Prelude (ShowS)
 import System.IO.Error
-import qualified Data.ListLike as LL
-import qualified Data.Set as S
+import qualified RIO.Set as S
+
+-- comonad
+import Control.Comonad
+import Control.Comonad.Env
+
+-- mono-traversable
+import Data.Sequences
+import Data.MonoTraversable
 
 -- | @OrderBy@ inherits @Eq@ & @Ord@ instances from left parameter, ignoring right parameter
 --
@@ -138,10 +138,10 @@ boolC :: Bool
 boolC b f t = bool f t b
 
 -- | An efficient version of "if index in bounds then pure (item at index) else empty."
-(!!?) :: (Num n, Ord n, LL.ListLike list item, Alternative f) => list -> n -> f item
+(!!?) :: (Num n, Ord n, IsSequence seq, item ~ Element seq, Alternative f) => seq -> n -> f item
 xs !!? n
     | n < 0 = empty -- still works if negative, but faster to quit immediately if negative, rather than traverse a whole list just to return Nothing
-    | otherwise = fix (\f i -> LL.uncons >>> \case Nothing -> empty; Just (h,t) -> if i == n then pure h else f (i + 1) t) 0 xs
+    | otherwise = fix (\f i -> uncons >>> \case Nothing -> empty; Just (h,t) -> if i == n then pure h else f (i + 1) t) 0 xs
 
 -- | @morphism239@ performs a composition of functions on monad transformers that share a common inner monad and constructor but have different parameters, e.g. @State Text m@ and @State String m@, or @ExceptT e m@ and @AccumT w m@. It's almost a generalization of mapAccumT, mapExceptT, etc., or like an inverse of @hoist@. It doesn't allow the inner monad to change, but does allow the outer monad to change.
 --
@@ -304,7 +304,7 @@ liftME :: l -> Maybe a -> Either l a
 liftME l Nothing = Left l
 liftME _ (Just x) = Right x
 
-type family WithToIO (m :: * -> *) = (r :: *) | r -> m
+type family WithToIO (m :: * -> *) = (r :: *)
 type instance WithToIO IO = ()
 
 -- | @MonadUnliftIO@ that actually /gets an @IO@/ from the monad, rather than merely /running an operation in @IO@/ from within the given monad.
