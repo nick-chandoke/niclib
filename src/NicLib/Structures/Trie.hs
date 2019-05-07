@@ -4,12 +4,6 @@
 -- Strict in keys but not values.
 --
 -- Likely you'll want to import this module qualified.
---
--- Note: module potentially unstable. Recently refactored from @ListLike@ into @mono-traversable@, and GHC's inferred some odd signatures for the following methods:
---
--- * insert
--- * update
--- * filter
 module NicLib.Structures.Trie
 ( Trie
 , delete
@@ -93,7 +87,7 @@ instance (Ord a, Semigroup tag) => Semigroup (Trie a tag) where
         update' !ss tag = match ss >>> \(!t,!h) -> case splitAt (length h) ss of
             (!p1, !p2) ->
                 let !y = if olength ss == length h then fromMaybe tag $ (<> tag) . fst <$> factorStop t else tag -- this is a modified lookup function
-                    !x = Trie $! S.union (getTrie $ singleton (p2, y)) (getTrie t)
+                    !x = Trie $! S.union (getTrie $ singleton p2 y) (getTrie t)
                     -- NB. update = update' when y = tag
                 in zip p1 x h
 
@@ -122,9 +116,9 @@ empty = Trie S.empty
 null :: (Ord a) => Trie a b -> Bool
 null = S.null . getTrie
 
-singleton :: Foldable t => (t val, tag) -> Trie val tag
-singleton (!seq, tag) = Trie $ Fld.foldl'
-    (\c z -> S.singleton . Trie' z $ Trie c)
+singleton :: Foldable t => t val -> tag -> Trie val tag
+singleton !seq tag = Trie $ Fld.foldr -- this must be foldr; using foldl' will put the trie in reverse order!
+    (\z c -> S.singleton . Trie' z $ Trie c)
     (S.singleton $ Stop tag)
     seq
 
@@ -152,16 +146,17 @@ lookup :: (IsSequence seq, e ~ Element seq, Ord e) => seq -> Trie e tag -> Maybe
 lookup !ss = match ss >>> \(t,h) -> if olength ss == length h then fst <$> factorStop t else Nothing
 
 -- | Insert element into trie if it is not already there; if it is in trie already (independent of its tag value) then trie is unaltered. Use method update to update an already existant element's tag value 
+insert :: (Foldable t, seq ~ t e, e ~ Element seq, IsSequence seq, Ord e, Index seq ~ Int) => seq -> tag -> Trie e tag -> Trie e tag
 insert ss tag t0 = case match ss t0 of 
     (t,h) -> let lh = length h in if hasStop t && olength ss == lh then t0 else
-        case splitAt lh ss of (p1, p2) -> zip p1 (Trie $ S.union (getTrie $ singleton (p2, tag)) (getTrie t)) h
+        case splitAt lh ss of (p1, p2) -> zip p1 (Trie $ S.union (getTrie $ singleton p2 tag) (getTrie t)) h
 
 -- | Inserts element into trie. If it's already in trie, updates its tag value
--- update :: (ListLike seq e, Ord e) => seq -> tag -> Trie e tag -> Trie e tag
-update ss tag = match ss >>> \(t,h) -> case splitAt (length h) ss of (p1, p2) -> zip p1 (Trie $ S.union (getTrie $ singleton (p2, tag)) (getTrie t)) h
+update :: (Foldable t, seq ~ t e, e ~ Element seq, IsSequence seq, Ord e, Index seq ~ Int) => seq -> tag -> Trie e tag -> Trie e tag
+update ss tag = match ss >>> \(t,h) -> case splitAt (length h) ss of (p1, p2) -> zip p1 (Trie $ S.union (getTrie $ singleton p2 tag) (getTrie t)) h
 
 -- | Filters branches
--- filter :: (ListLike seq a, Ord a) => (seq -> tag -> Bool) -> Trie a tag -> Trie a tag
+filter :: (Foldable t, seq ~ t e, e ~ Element seq, IsSequence seq, Ord e, Index seq ~ Int) => (seq -> tag -> Bool) -> Trie e tag -> Trie e tag
 filter p = foldr (\f t b -> if p f t then insert f t b else b) empty
 
 difference :: (Ord a, t ~ Trie a tag) => t -> t -> t
