@@ -1,4 +1,6 @@
--- | Helpful functions
+-- | Helpful functions for filepaths and filepath-like things, such as URIs. All IO-based functions are monomorphic to @String@, but pure functions that transform pathnames are for @mono-traversable@ types.
+--
+-- Note that all functions that use 'pathSeparator' (such as 'dirAndBase') are monomorphic in @String@. This is done to prevent /e.g./ *NIX users from assuming that they can use 'basename' on URIs, when this would fail on a Windows system because the path separator is different. In these cases, use the underlying functions (usually in 'NicLib.List', /e.g./ 'breakAtLast'.)
 module NicLib.FileSystem
 ( -- * Canonical FilePaths
   FilePath(..)
@@ -29,10 +31,9 @@ module NicLib.FileSystem
 , realPath
 ) where
 
-import RIO hiding (FilePath)
+import RIO hiding (FilePath, takeWhile, reverse)
 
 import Data.Function (on)
-import Control.Applicative
 import Control.Monad (guard)
 import Control.Monad.Catch
 import Control.Monad.Trans.Except
@@ -45,26 +46,24 @@ import Data.String (IsString(..))
 import NicLib.List
 import NicLib.NStdLib
 -- import NicLib.Text (quote) -- *
-import Prelude hiding (FilePath)
 import System.FilePath (pathSeparator)
 import System.Posix.Files (createSymbolicLink, readSymbolicLink)
 -- import qualified RIO.Set as S -- *
 -- import qualified RIO.Text as T -- *
-import qualified Prelude
 import qualified RIO.Directory as D
-import Data.Sequences (tailEx, cons, IsSequence(..))
+
+import Data.Sequences (tailEx, cons, IsSequence(..), reverse)
 import Data.MonoTraversable
 
--- | Wrapper around @String@ filepaths such that their semigroup operation guarantees exactly one 'pathSeparator' between the @FilePath@'s. This is separate from @(\</\>)@, which sometimes puts two consecutive separators.
-newtype FilePath = FilePath { unwrapFilePath :: Prelude.FilePath }
-instance IsString FilePath where fromString = FilePath
-instance Show FilePath where show = unwrapFilePath
-instance Monoid FilePath where
-    mempty = FilePath mempty
-    mappend = FilePath <% (concatPaths pathSeparator) `on` unwrapFilePath
-instance Semigroup FilePath where (<>) = mappend -- GHC < 8.4.1 compat
+-- | Filepaths that concatenate via 'concatPaths' with the system 'pathSeparator'.
+--
+-- For general cases, such as URI handling, use @concatPaths@.
+newtype FilePath = FilePath { unwrapFilePath :: String } deriving (IsString, Show, Eq, Ord)
+instance Monoid FilePath where mempty = FilePath mempty
+instance Semigroup FilePath where
+    (<>) = FilePath <% concatPaths pathSeparator `on` unwrapFilePath
 
--- | Append two paths with exactly one separator between them
+-- | Append two paths with exactly one separator between them. /cf./ @(\</\>)@, which sometimes puts two consecutive separators.
 --
 -- Generalized to @MonoTraversable@ from @String@ to accomodate URL handling on the '/' separator
 concatPaths :: forall seq elem. (Semigroup seq, IsSequence seq, MonoTraversable seq, elem ~ Element seq, Eq elem) => elem -> seq -> seq -> seq
@@ -102,39 +101,41 @@ mvt destDir@(FilePath -> dd) files = liftIO $ do
 -- | Stores files with duplicate names; transforms "file.ext" into "file-1.ext"; transforms "file-1.ext" into "file-2.ext", &c
 --
 -- For filepaths without extensions: transforms "file" into "file-1", and "file-1" into "file-2"
-nextDuplicateFileName :: String -> String
-nextDuplicateFileName [] = mempty
-nextDuplicateFileName a = case breakAtLast '.' a of
-    ("", _) -> f a
-    (b, ext) -> f (init b) ++ '.':ext
-    where
-        f c = case breakAtLast '-' c of
-            ("", _) -> c ++ "-1"
-            (_, "") -> c ++ "1"
-            (d, x) -> case readMaybe x :: Maybe Int of
-                Nothing -> d
-                Just n -> d ++ show (succ n)
+nextDuplicateFileName :: (IsSequence seq, IsString seq, Element seq ~ Char) => (seq -> String) -> seq -> seq
+nextDuplicateFileName toString a
+    | onull a = a
+    | otherwise = case breakAtLast '.' a of
+        (b, ext) | onull b -> f a
+                 | otherwise -> f (initEx b) <> '.' `cons` ext
+  where
+    f c = case breakAtLast '-' c of
+        (d, x) | onull d -> c <> "-1"
+               | onull x -> c <> "1"
+               | otherwise -> case readMaybe @Int (toString x) of -- darn this readMaybe taking only a String
+                    Nothing -> d
+                    Just n  -> d <> fromString (show (n + 1))
 
 -- | Checks whether object at path exists, and if not, returns original name; if so, returns 'nextDuplicateFileName' @name@
 --
 -- Works for both relative and absolute pathnames, as per 'System.Directory.doesPathExist'
 pathOrNextDuplicate :: MonadIO m => String -> m String
-pathOrNextDuplicate p = liftIO $ bool p (nextDuplicateFileName p) <$> D.doesPathExist p
+pathOrNextDuplicate p = liftIO $ bool p (nextDuplicateFileName id p) <$> D.doesPathExist p
 
 -- | Get file extension. Returns empty string if no extension. Extension includes leading dot.
-fileExtension :: String -> String
-fileExtension s = if '.' `elem` s then ('.':) . reverse . Prelude.takeWhile (/='.') $ reverse s else empty
+fileExtension :: (Foldable t, seq ~ t Char, IsSequence seq, Element seq ~ Char) => seq -> seq
+fileExtension s = if '.' `elem` s then (cons '.') . reverse . takeWhile (/='.') $ reverse s else mempty
 
 -- | Replace a file's extension if it has one; add one if it doesn't.
 --
 -- >>> "file.png" `withExtension` "txt"
 -- "file.txt"
-withExtension :: String -- ^ filepath
-              -> String -- ^ extension to add (do not include a leading dot)
-              -> String
+withExtension :: (IsSequence seq, Element seq ~ Char)
+              => seq -- ^ filepath
+              -> seq -- ^ extension to add (do not include a leading dot)
+              -> seq
 withExtension (breakAtLast '/' -> (d,s)) ext = d <> case breakAtLast '.' s of
-    ("",_) -> s ++ '.':ext
-    (a,_) -> a ++ ext
+    (a,_) | onull a -> s <> '.' `cons` ext
+          | otherwise -> a <> ext
 
 mkdir :: MonadIO m => String -> m ()
 mkdir dir = liftIO $ D.createDirectoryIfMissing True dir
@@ -185,7 +186,7 @@ basename = snd . dirAndBase
 -- | Remove trailing path separator from string
 noPathEnd :: String -> String
 noPathEnd s | null s = mempty
-            | otherwise = last s == pathSeparator ? init s ↔ s
+            | otherwise = lastEx s == pathSeparator ? initEx s ↔ s
 
 {-
 -- | Compare two directories recursively, for structure and file content; one can safely say that if dirdiff returns mempty on directories containing ONLY FILES AND DIRECTORIES (symlinks and special filesystem objects are not considered!), then these two directories are exactly identical.

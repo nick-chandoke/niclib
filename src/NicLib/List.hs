@@ -69,7 +69,7 @@ breakAtLast sep = breakAtLastP (==sep)
 
 -- TODO: can probably do faster via difference lists
 -- | 'breakAtLast' generalized in the predicate
-breakAtLastP :: (IsSequence seq, e ~ Element seq) => (e -> Bool) -> seq -> (seq, seq)
+breakAtLastP :: IsSequence seq => (Element seq -> Bool) -> seq -> (seq, seq)
 breakAtLastP p = go . (mempty,)
     where
         go z@(x, y) = case break p y of
