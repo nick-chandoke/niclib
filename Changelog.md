@@ -1,5 +1,9 @@
 # NicLib ChangeLog
 
+## v0.3.0
+
+Moved ```NicLib.Net``` module to my [```web-automata```](#) package.
+
 ## v0.2.2
 
 * added changelog ;p

@@ -1,4 +1,6 @@
 {-# language NoBangPatterns #-}
+
+-- TODO: replace stateful stuff with IORef? Is that any better?
 -- | Structures that reduce memory use by not storing redundant data
 module NicLib.Structures.IndexedSet
 ( IndexedSet

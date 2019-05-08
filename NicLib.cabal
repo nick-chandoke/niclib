@@ -13,7 +13,7 @@ name: NicLib
 stability: Stable
 synopsis: nixy's personal lib
 tested-with: GHC ==8.6.4
-version: 0.2.1
+version: 0.3.0
 
 library
   ghc-options: -Wno-type-defaults
@@ -21,7 +21,6 @@ library
   exposed-modules:
       NicLib.FileSystem
       NicLib.List
-      NicLib.Net
       NicLib.NStdLib
       NicLib.Set
       NicLib.Statistics
@@ -36,20 +35,15 @@ library
       binary,
       bytestring,
       comonad,
-      conduit,
       containers,
       data-default,
       exceptions,
       fgl,
       filepath,
       ghc-prim,
-      http-client,
       mono-traversable,
       random-fu,
       random-source,
-      req,
-      req-conduit,
-      resourcet,
       rio,
       safe-exceptions,
       store,
@@ -58,10 +52,7 @@ library
       time,
       transformers>=0.5.5.0,
       unix,
-      uri-bytestring,
       vector
---    http-conduit
---    streaming-commons
   default-extensions:
       ApplicativeDo,
       Arrows,
