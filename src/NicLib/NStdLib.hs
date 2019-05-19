@@ -4,8 +4,6 @@ module NicLib.NStdLib
   (!!?)
 , (%>)
 , (<%)
-, (<&&>)
-, (<||>)
 , (?)
 , (↔)
 -- * Convenience Functions
@@ -32,9 +30,6 @@ module NicLib.NStdLib
 -- * Ordering Comonad
 , OrderBy(..)
 , orderBy
--- * Hack to Make IO Things Work
-, WithToIO
-, MonadUnliftIO'(..)
 ) where
 
 -- rio & base
@@ -77,16 +72,6 @@ instance ComonadEnv ord (OrderBy ord) where
 
 orderBy :: (a -> ord) -> a -> OrderBy ord a
 orderBy f = OrderBy <$> f <*> id 
-
-infixl 3 <&&>
--- | Convenient particularly in @(->)@, for composition of unary functions, e.g. @filter (odd \<&&\> (`divides` 5))@
-(<&&>) :: Applicative f => f Bool -> f Bool -> f Bool
-(<&&>) = liftA2 (&&)
-
-infixl 3 <||>
--- | Convenient particularly in @(->)@, for composition of unary functions, e.g. @filter (isDigit \<||\> (=='.'))@
-(<||>) :: Applicative f => f Bool -> f Bool -> f Bool
-(<||>) = liftA2 (||)
 
 -- | Ternary if-then-else operators
 --
@@ -305,31 +290,3 @@ describeIOError e =
 liftME :: l -> Maybe a -> Either l a
 liftME l Nothing = Left l
 liftME _ (Just x) = Right x
-
-type family WithToIO (m :: * -> *) = (r :: *)
-type instance WithToIO IO = ()
-
--- | The dual of @MonadIO@: @MonadUnliftIO@ that actually /returns an @IO@/ from the monad, rather than an @IO@ wrapped in the given monad, using an associated datum if necessary. This appears to be needed for functions whose parameters are @IO@ Kleisli's, such as [@reqBr@](https://hackage.haskell.org/package/req-2.0.1/docs/Network-HTTP-Req.html#v:reqBr) or [@arrIO@](http://hackage.haskell.org/package/hxt-9.3.1.16/docs/Control-Arrow-ArrowIO.html#v:arrIO)..
---
--- == The @WithToIO@ Parameter
---
--- By their /definition/, a @MonadUnliftIO'@ permits a natural transformation to @IO@. By their /nature/, they should express the [@ReaderT IO@ pattern](https://www.fpcomplete.com/blog/2017/06/readert-design-pattern), thus generalizing @RIO@. __All @MonadReader@s wrapping a chain of @MonadUnliftIO' m@'s à la @MonadIO@ permit a @MonadUnliftIO'@ instance__, including all @(RIO env)@'s. (Though this is a sufficient condition for implementation, implementations cannot be automatically derived due to unpredictability of constructor/accessor names (/e.g./ @newtype MyThing m a = MyThing { runMyThing :: m a }@.)) Only really sensible when the associated datum is a mutable reference. Here's a simple example with a wrapper around @RIO@:
---
--- @
--- data MyEnv
--- newtype MyType a = MyType (RIO ('SomeRef' MyEnv) a)
---     deriving (Functor, Applicative, Monad, MonadIO, MonadUnliftIO)
--- type instance WithToIO MyType = SomeRef MyEnv
--- instance MonadUnliftIO\' MyType where toIO\' e (MyType r) = runRIO e r
--- @
---
--- We need to newtype around @RIO@ so that the kind matches @WithToIO@, which purposefully has few parameters as because super-unary non-injectivity is troublesome. Not only that, but it enables us to instance other typeclasses that are designed for monads (/i.e./ of the unary kind @* -> *@), such as @[MonadHttp](https://hackage.haskell.org/package/req-2.0.1/docs/Network-HTTP-Req.html#t:MonadHttp)@ in the @req@ package.
---
--- == vis a vis @MonadReader@
---
--- Like @MonadUnliftIO@, @MonadReader@ returns in the original monad, rather than in @IO@. This does not oppose the purpose of @MonadUnliftIO'@; we can implement @MonadUnliftIO'@ where @WithToIO m ~ ()@ and @toIO _ = unwrap . ask@, where @unwrap@ is some "deconstructor" /e.g./ @runStateT@.
-class MonadIO m => MonadUnliftIO' m where
-    toIO' :: WithToIO m -> m a -> IO a
-
-instance MonadUnliftIO' IO where toIO' _ = id
--- consider instancing Control.Lens.Wrapped.Wrapped's. Considering the last paragraph in the documentation above, a MonadUnliftIO' should be a MonadReader env + an unwrap function, right? Seems like Wrapped would be *most* appropriate for this! In fact, I wouldn't even *need* the MonadUnliftIO' class at all! Would I still need WithToIO? Like RIO, the unwrap function may require the environment as an argument....
